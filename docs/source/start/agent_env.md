@@ -18,7 +18,9 @@ The first step is to start a sandbox. You can do this either locally or on a rem
 
 ### Local deployment
 
-Local deployment starts a sandbox as a Docker container on your machine, then connects to the `swerex` server inside that container. This is the easiest way to debug environment behavior before moving to a remote platform.
+*Comming Soon~*
+
+<!-- Local deployment starts a sandbox as a Docker container on your machine, then connects to the `swerex` server inside that container. This is the easiest way to debug environment behavior before moving to a remote platform.
 
 **Dependencies.** Install the runtime package and make sure a container runtime is available:
 
@@ -67,16 +69,18 @@ You can run the full demo from the repo root with:
 
 ```bash
 DEPLOYMENT=local python examples/agent_env/demo.py
-```
+``` -->
 
 ### Remote deployment (VEFAAS)
 
 VEFAAS is a Volcengine FaaS platform. For workloads with many concurrent runs, it is often more stable and scales better than self-hosted local instances.
 
+You can directly refer to [this tutorial](https://www.volcengine.com/docs/6662/2278468?lang=zh) to obtain the required configuration parameters for the integration with the veFaaS cloud sandbox, complete the environment setup, and verify connectivity.
+
 **Dependencies.** Install the required packages:
 
 ```bash
-pip install volcenginesdkvefaas swerex
+pip install volcengine-python-sdk swe-rex
 ```
 
 **Environment variables.** Set your credentials and optional function settings in the environment.
@@ -93,8 +97,6 @@ export VEFAAS_FUNCTION_ROUTE=xxxxxxxxxx
 | `VOLCE_ACCESS_KEY` or `VOLCENGINE_ACCESS_KEY` | Volcengine access key |
 | `VOLCE_SECRET_KEY` or `VOLCENGINE_SECRET_KEY` | Volcengine secret key |
 | `VEFAAS_REGION` | Region (optional, default `cn-beijing`) |
-
-You can also set `VEFAAS_FUNCTION_ID` and `VEFAAS_FUNCTION_ROUTE` directly in the config below as `function_id` and `function_route`. Get your access credentials from the [Volcengine](https://www.volcengine.com/) console, and get the function ID and route from the VEFAAS console.
 
 **Config and start.** Build the config, create the environment, and start it:
 
