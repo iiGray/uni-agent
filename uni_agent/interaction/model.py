@@ -98,7 +98,9 @@ class AgentChatModel:
                 f"Last tool response: {messages[-1]['content']}"
             )
 
-        sampling_params = kwargs.get("sampling_params", self.sampling_params)
+        sampling_params = self.sampling_params.copy()
+        sampling_params.update(kwargs.get("sampling_params", self.sampling_params))
+        
 
         with simple_timer("generate_sequences", metrics):
             token_output = await self.client.generate(

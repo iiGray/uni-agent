@@ -104,7 +104,7 @@ class AgentInteraction:
                 return
         self.messages.insert(0, {"role": "system", "content": manifest})
 
-    async def step(self, step_idx: int):
+    async def step(self, step_idx: int, **kwargs):
         """Run one model-call + tool-execution cycle.
 
         Outcome is reported at two levels:
@@ -133,6 +133,7 @@ class AgentInteraction:
             model_output, tool_calls, rollout_cache, generation_info = await self.model.query(
                 messages=self.messages,
                 rollout_cache=self.rollout_cache,
+                ** kwargs
             )
             step_output.response = model_output
             self.logger.info(
