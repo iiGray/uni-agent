@@ -1,0 +1,35 @@
+- name: mem_agent
+
+  _target_: uni_agent.workflow_loop.UniAgentWorkflowLoop
+
+  concurrency: 512
+  log_dir: /tmp/search_agent
+  mask_abnormal_exit_traj: false
+
+  workflow:
+    cls: examples.workflow.mem_agent.mem_agent.MemAgentWorkflow
+
+    config:
+      chunk_size: 5000
+      max_prompt_length: 1024
+      max_memorization_length: 1024
+      max_chunks: 8
+      max_final_response_length: 1024
+
+    training_mode: merged
+    # Custom kwargs for MemAgentWorkflow
+    max_turns: 64
+    action_timeout: 300
+    context_switch_frequency: 5
+
+  env:
+    deployment:
+      type: host
+
+  tool_parser: hermes
+
+  tools:
+
+  reward:
+    name: memagent
+
