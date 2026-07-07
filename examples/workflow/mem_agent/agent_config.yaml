@@ -3,7 +3,7 @@
   _target_: uni_agent.workflow_loop.UniAgentWorkflowLoop
 
   concurrency: 512
-  log_dir: /tmp/search_agent
+  log_dir: /tmp/mem_agent
   mask_abnormal_exit_traj: false
 
   workflow:
