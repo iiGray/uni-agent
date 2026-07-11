@@ -1,4 +1,5 @@
 """Abstract base for reward specs."""
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
@@ -9,7 +10,7 @@ class AbstractRewardSpec(ABC):
     """Reward spec: computes reward from interaction result and optional env eval."""
 
     @abstractmethod
-    async def compute_reward(self, interaction_result: dict, **kwargs) -> tuple:
+    async def compute_reward(self, interaction_result: dict | AgentWorkflowResult, **kwargs) -> tuple | list[tuple]:
         """
         Compute reward (and optionally run eval in env) from the interaction result.
 
@@ -20,8 +21,8 @@ class AbstractRewardSpec(ABC):
         """
         ...
 
-    @abstractmethod
-    async def set_workflow_reward(self, workflow_result: AgentWorkflowResult, ** kwargs) -> list[tuple]:
-        """
-        Compute and set reward for every `WorkflowStepOutput` in `AgentWorkflowResult`
-        """
+    # @abstractmethod
+    # async def set_workflow_reward(self, workflow_result: AgentWorkflowResult, ** kwargs) -> list[tuple]:
+    #     """
+    #     Compute and set reward for every `WorkflowStepOutput` in `AgentWorkflowResult`
+    #     """

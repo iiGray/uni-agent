@@ -5,23 +5,27 @@ export CUDA_DEVICE_MAX_CONNECTIONS=1 # For megatron communication/computation ov
 export HYDRA_FULL_ERROR=1
 export RAY_NO_SET_CUDA_VISIBLE_DEVICES=1
 export RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
+
+
 # ================= basic =================
 NNODES_ROLLOUT=1
 NNODES_TRAIN=1
 NGPUS_PER_NODE=8
 
-ppo_mini_batch_size=8
-rollout_n=8
+ppo_mini_batch_size=32
+rollout_n=4
 
 # ================= path =================
 WORKING_DIR=${PWD}
-DATA_ROOT=/nvme1/jbb/MemReread/datas/training_data
+DATA_ROOT=/data1/bbj/uni-agent/datas/training_data
 PROMETHEUS_FILE=${PROMETHEUS_FILE:-/tmp/ray/session_latest/metrics/prometheus/prometheus.yml}
 
 # ================= wandb =================
 project_name=mem_agent
 experiment_datetime=$(date +%Y%m%d_%H%M)
 experiment_name=mem_agent-async-n$rollout_n-$experiment_datetime
+
+export TENSORBOARD_DIR="/data1/bbj/uni-agent/tensorboard_log/${project_name}/${experiment_name}"
 
 # ================= data =================
 mem_train=$DATA_ROOT/hotpotqa_train.parquet
@@ -30,14 +34,14 @@ filter_overlong_prompts=False
 
 train_files="['$mem_train']"
 test_files="['$mem_test']"
-val_before_train=True
+val_before_train=False
 
 # ================= ckpt =================
 model_name=Qwen3-4B
 
 # model_path=$DATA_ROOT/model/${model_name}
 
-model_path=/nvme1/hf_models/Qwen3-4B
+model_path=/data1/bbj/uni-agent/models/Qwen3-4B
 #model_path=$DATA_ROOT/model/Qwen3-30B-A3B-Instruct-2507
 save_path=$DATA_ROOT/ckpts/$experiment_name
 
@@ -83,14 +87,16 @@ ETP_SIZE=1
 
 max_prompt_length=$((1024 * 8))
 max_response_length=$((1024 * 1))
-actor_max_token_len_per_gpu=$(((max_prompt_length + max_response_length) / CP_SIZE))
-log_prob_max_token_len_per_gpu=$(((max_prompt_length + max_response_length) / CP_SIZE))
+# actor_max_token_len_per_gpu=$(((max_prompt_length + max_response_length) / CP_SIZE))
+# log_prob_max_token_len_per_gpu=$(((max_prompt_length + max_response_length) / CP_SIZE))
+actor_max_token_len_per_gpu=32768
+log_prob_max_token_len_per_gpu=32768
 
 # ================= fully async specific =================
 train_prompt_bsz=0
 total_rollout_steps=200000
 staleness_threshold=1.0
-trigger_parameter_sync_step=8
+trigger_parameter_sync_step=2
 require_batches=1
 partial_rollout=True
 
@@ -102,13 +108,14 @@ fi
 infer_tp=4
 infer_dp=1
 infer_ep=1
-gpu_memory_utilization=0.4
+gpu_memory_utilization=0.8
 
 
 # ================= Main command =================
 
 ray job submit --no-wait \
     --working-dir "${WORKING_DIR}" \
+    --runtime-env-json="{\"env_vars\": {\"TENSORBOARD_DIR\": \"${TENSORBOARD_DIR}\", \"RAY_DEDUP_LOGS\": \"0\"}}" \
     -- python3 -m verl.experimental.fully_async_policy.fully_async_main \
     --config-name='fully_async_ppo_trainer.yaml' \
     algorithm.adv_estimator=$adv_estimator \
@@ -125,8 +132,8 @@ ray job submit --no-wait \
     data.max_response_length=$max_response_length \
     data.filter_overlong_prompts=$filter_overlong_prompts \
     data.truncation='error' \
-    actor_rollout_ref.actor.strategy=fsdp \
-    actor_rollout_ref.ref.strategy=fsdp \
+    actor_rollout_ref.actor.strategy=fsdp2 \
+    actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.model.path=$model_path \
     actor_rollout_ref.model.trust_remote_code=True \
     actor_rollout_ref.model.use_fused_kernels=$use_fused_kernels \
@@ -163,6 +170,7 @@ ray job submit --no-wait \
     actor_rollout_ref.rollout.multi_turn.max_parallel_calls=1 \
     actor_rollout_ref.rollout.agent.num_workers=8 \
     actor_rollout_ref.rollout.agent.agent_loop_config_path=$AGENT_CONFIG_PATH \
+    actor_rollout_ref.rollout.agent.default_agent_loop=mem_agent \
     actor_rollout_ref.rollout.prometheus.enable=True \
     actor_rollout_ref.rollout.prometheus.port=9090 \
     actor_rollout_ref.rollout.prometheus.file=$PROMETHEUS_FILE \

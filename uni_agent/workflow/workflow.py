@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 from transformers import PreTrainedTokenizerBase
 from pydantic import BaseModel, Field
-
+import torch.distributed as dist
 from uni_agent.async_logging import get_logger
 from uni_agent.skills.manager import SkillsManager
 from uni_agent.utils import auto_await, simple_timer
@@ -173,7 +173,7 @@ class AgentWorkflowBase(ABC):
         self._global_step_idx += 1
         self._step_idx += 1
         kwargs = dict(sampling_params = sampling_params) if sampling_params is not None else dict()
-        step_output = AgentInteraction.step(self, self._step_idx, **kwargs)
+        step_output = await AgentInteraction.step(self, self._step_idx, **kwargs)
         self.get_current_workflow_step().add_step(step_output)
         
         return step_output
@@ -194,7 +194,8 @@ class AgentWorkflowBase(ABC):
         self._interaction_start = time.perf_counter()
     
     def _collect_workflow_step(self):
-        if not (self._current_workflow_step.steps): return
+        if not hasattr(self, "_current_workflow_step") or not self._current_workflow_step.steps:
+            return
 
         step = self.get_current_workflow_step()
         step.set_messages(self.messages)
@@ -213,7 +214,6 @@ class AgentWorkflowBase(ABC):
         self._collect_workflow_step()
         self._track_workflow_step()
         self.get_current_workflow_step().set_prompt_messages(messages)
-        self.logger.info(("Context Updated. New Prompt:\n") if self.trajectory else ("Inital Prompt:\n"))
         if insert_skill:
             messages = self.inject_skills_manifest(messages)
         for message in messages:

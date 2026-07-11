@@ -1,3 +1,4 @@
+from __future__ import annotations
 import string
 from typing import TYPE_CHECKING
 from uni_agent.async_logging import get_logger
@@ -174,7 +175,7 @@ class MemRewardSpec(AbstractRewardSpec):
         self.logger = get_logger("mem-reward", run_id=run_id)
 
     @auto_await
-    async def set_workflow_reward(self, workflow_result: AgentWorkflowResult, ** kwargs):
+    async def compute_reward(self, workflow_result: AgentWorkflowResult, ** kwargs):
         response = workflow_result.final_state.steps[-1].response
         reward = compute_score(response, self.ground_truth)
         workflow_result.set_reward(reward)
