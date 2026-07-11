@@ -22,7 +22,6 @@ from uni_agent.reward import load_reward_spec
 from uni_agent.skills import SkillsManager, SkillsManagerConfig
 from uni_agent.agent_loop import _deep_merge
 from uni_agent.workflow.config import WorkflowConfig
-from uni_agent.workflow.config import WorkflowConfig
 from uni_agent.workflow.workflow import WorkflowStepOutput, AgentWorkflowBase, AgentWorkflowResult
 
 from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopOutput
@@ -54,7 +53,9 @@ class UniAgentWorkflowLoop(AgentLoopBase):
         self.chat_model = self._init_chat_model(config_dict["model"])
 
         wf_config = WorkflowConfig(
-            config_dict['workflow']['cls'], config_dict['tools'], config_dict['tool_parser']
+            workflow_class = config_dict['workflow']['cls'], 
+            tools = config_dict.get('tools') or [], 
+            tool_parser = config_dict.get('tool_parser', 'qwen3_coder')
         )
 
         self.tools_manager = self._init_tools_manager(
@@ -73,10 +74,10 @@ class UniAgentWorkflowLoop(AgentLoopBase):
             run_id = self.run_id,
             env = self.env,
             model = self.chat_model,
+            tokenizer = self.tokenizer,
             tools_manager = self.tools_manager,
             raw_data = kwargs,
-            skills_manager = self.skills_manager,
-            ** wf_config['workflow']
+            skills_manager = self.skills_manager
         )
 
         if config_dict["reward"] is not None:
@@ -86,7 +87,12 @@ class UniAgentWorkflowLoop(AgentLoopBase):
                 "run_id": self.run_id,
                 "env": self.env,
             }
-            self.reward_spec = load_reward_spec(reward_config)
+            try:
+                self.reward_spec = load_reward_spec(reward_config)
+            except Exception as e:
+                print(f"[DEBUG] Exception in load_reward_spec: {e}", flush=True)
+                self.reward_spec = None
+                raise
         else:
             self.reward_spec = None
 
@@ -98,7 +104,7 @@ class UniAgentWorkflowLoop(AgentLoopBase):
             self.logger.info(f"sampling_params: {sampling_params}")
             self.logger.info(f"environment config: {config_dict['env']}")
             self.logger.info(f"tools config: {config_dict['tools']}")
-            self.logger.info(f"interaction config: {config_dict['interaction']}")
+            self.logger.info(f"workflow config: {config_dict['workflow']}")
             self.logger.info(f"mask_abnormal_exit_traj: {self.mask_abnormal_exit_traj}")
             self.logger.info(f"output_dir: {self.output_dir}")
             try:
@@ -112,9 +118,13 @@ class UniAgentWorkflowLoop(AgentLoopBase):
                 workflow_result: AgentWorkflowResult = await self.workflow._run()
 
                 if self.reward_spec is not None:
-                    await self.reward_spec.set_workflow_reward(
-                        workflow_result = workflow_result,
-                    ) #TODO: check type is list
+                    try:
+                        await self.reward_spec.compute_reward(
+                            workflow_result = workflow_result,
+                        ) #TODO: check type is list
+                    except Exception as e:
+                        print(f"[DEBUG] Exception in compute_reward(workflow)`: {e}", flush=True)
+                        raise
                 else:
                     self.logger.warning("No reward spec is provided, reward score will be set to -100")
                     workflow_result.set_reward(-100)
@@ -123,8 +133,11 @@ class UniAgentWorkflowLoop(AgentLoopBase):
 
                 output = await self._convert_to_per_step_outputs(workflow_result)
 
-            except Exception:
-                self.logger.critical("Workflow failed before producing result", exc_info=True)
+            except Exception as e:
+                self.logger.critical(f"Workflow failed before producing result.")
+                self.logger.exception(e)
+                import sys, traceback
+                traceback.print_exc(file=sys.stderr)
                 output = await self._build_empty_agent_output(exit_reason="workflow_failed")
             finally:
                 await self.env.close()
@@ -205,10 +218,10 @@ class UniAgentWorkflowLoop(AgentLoopBase):
         return cls._routing_replay_shape
 
 
-    def _save_workflow_result(self, wf_result: AgentWorkflowResult, output_dir: Path):
+    def _save_workflow_result(self, wf_result: AgentWorkflowResult):
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        with (output_dir / "rollout_cache.pkl").open("wb") as f:
+        with (self.output_dir / "rollout_cache.pkl").open("wb") as f:
             pickle.dump(wf_result.rollout_caches, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         save_content: dict[str, Any] = {
@@ -218,7 +231,7 @@ class UniAgentWorkflowLoop(AgentLoopBase):
             "trajectory": [s.model_dump() for s in wf_result.trajectory],
         }
 
-        (output_dir / "workflow_result.json").write_text(
+        (self.output_dir / "workflow_result.json").write_text(
             json.dumps(save_content, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",
         )
@@ -246,12 +259,14 @@ class UniAgentWorkflowLoop(AgentLoopBase):
             if rollout_config.max_model_len is not None
             else rollout_config.prompt_length + rollout_config.response_length
         )
-        config_dict["model"] = {
+        if "model" not in config_dict:
+            config_dict["model"] = {}
+        config_dict["model"].update({
             "client": self.server_manager,
             "tokenizer": self.tokenizer,
             "max_model_len": max_model_len,
             "sampling_params": sampling_params,
-        }
+        })
 
         if not config_dict.get("workflow"):
             raise ValueError(
@@ -356,6 +371,6 @@ class UniAgentWorkflowLoop(AgentLoopBase):
         wf_result: AgentWorkflowResult,
     ) -> list[AgentLoopOutput]:
 
-        results = [w.to_json() for w in wf_result.trajectory]
+        results = [w.to_interaction_result() for w in wf_result.trajectory]
 
-        return [self.convert_to_agent_output(r) for r in results]
+        return [await self.convert_to_agent_output(r) for r in results]
