@@ -43,6 +43,7 @@ class AgentChatModel:
                 add_generation_prompt=True,
                 tokenize=True,
                 tools=self.tools_schemas,
+                **getattr(self, "apply_chat_template_kwargs", {}),
             ),
         )
         prompt_ids = normalize_token_ids(prompt_ids)
@@ -150,6 +151,7 @@ class AgentChatModel:
                 new_messages,
                 add_generation_prompt=True,
                 tokenize=True,
+                **getattr(self, "apply_chat_template_kwargs", {}),
             ),
         )
         return self.message_boundary_tokens + normalize_token_ids(tokenized_prompt)
@@ -172,6 +174,7 @@ class AgentChatModel:
                     [dummy_next_message],
                     add_generation_prompt=True,
                     tokenize=True,
+                    **getattr(self, "apply_chat_template_kwargs", {}),
                 )
             )
             with_boundary_ids = normalize_token_ids(
@@ -180,6 +183,7 @@ class AgentChatModel:
                     dummy_history + [dummy_next_message],
                     add_generation_prompt=True,
                     tokenize=True,
+                    **getattr(self, "apply_chat_template_kwargs", {}),
                 )
             )
         except Exception:
