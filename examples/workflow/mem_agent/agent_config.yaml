@@ -17,7 +17,7 @@
       max_final_response_length: 1024
 
     training_mode: merged
-    # Custom kwargs for MemAgentWorkflow
+
     max_turns: 64
     action_timeout: 300
     context_switch_frequency: 5
@@ -26,10 +26,13 @@
     deployment:
       type: host
 
+  model:
+    apply_chat_template_kwargs:
+      enable_thinking: false
+
   tool_parser: hermes
 
   tools:
 
   reward:
-    name: memagent
-
+    name: mem
