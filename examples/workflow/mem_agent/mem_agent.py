@@ -59,7 +59,7 @@ class MemAgentWorkflow(AgentWorkflowBase):
         prompt, chunks = process(raw_data, self.tokenizer, self.config_dict['chunk_size'])
 
         memory = None
-        for chunk in chunks:
+        for cid, chunk in enumerate(chunks):
             if self.get_global_step_idx() >= self.config_dict['max_chunks']: break
             conversation = [
                 {"role": "user", "content": TEMPLATE.format(
