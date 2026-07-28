@@ -17,7 +17,7 @@ rollout_n=4
 
 # ================= path =================
 WORKING_DIR=${PWD}
-DATA_ROOT=/data1/bbj/uni-agent/datas/training_data
+DATA_ROOT=/path/to/data
 PROMETHEUS_FILE=${PROMETHEUS_FILE:-/tmp/ray/session_latest/metrics/prometheus/prometheus.yml}
 
 # ================= wandb =================
@@ -25,7 +25,7 @@ project_name=mem_agent
 experiment_datetime=$(date +%Y%m%d_%H%M)
 experiment_name=mem_agent-async-n$rollout_n-$experiment_datetime
 
-export TENSORBOARD_DIR="/data1/bbj/uni-agent/tensorboard_log/${project_name}/${experiment_name}"
+export TENSORBOARD_DIR="./${project_name}/${experiment_name}"
 
 # ================= data =================
 mem_train=$DATA_ROOT/hotpotqa_train.parquet
@@ -37,11 +37,10 @@ test_files="['$mem_test']"
 val_before_train=False
 
 # ================= ckpt =================
-model_name=Qwen3-4B
+model_name=Qwen3-8B
 
-# model_path=$DATA_ROOT/model/${model_name}
+model_path=$DATA_ROOT/model/${model_name}
 
-model_path=/data1/bbj/uni-agent/models/Qwen3-4B
 #model_path=$DATA_ROOT/model/Qwen3-30B-A3B-Instruct-2507
 save_path=$DATA_ROOT/ckpts/$experiment_name
 
@@ -68,7 +67,7 @@ rollout_n_val=1
 loss_agg_mode="token-mean"
 
 save_freq=-1
-test_freq=10
+test_freq=1
 log_val_generations=30
 
 # ================= performance =================
