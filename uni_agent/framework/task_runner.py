@@ -56,7 +56,7 @@ async def run_task(
     )
     if tokenizer_path is not None:
         task.setdefault("agent", {})["tokenizer_path"] = tokenizer_path
-        
+
     if raw_prompt is not None and not task.get("prompt"):
         task["prompt"] = raw_prompt
 
