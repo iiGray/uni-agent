@@ -25,7 +25,7 @@ project_name=mem_agent
 experiment_datetime=$(date +%Y%m%d_%H%M)
 experiment_name=mem_agent-async-n$rollout_n-$experiment_datetime
 
-export TENSORBOARD_DIR="./${project_name}/${experiment_name}"
+export TENSORBOARD_DIR="./tensorboard_log/${project_name}/${experiment_name}"
 
 # ================= data =================
 mem_train=$DATA_ROOT/hotpotqa_train.parquet
@@ -44,9 +44,8 @@ model_path=$DATA_ROOT/model/${model_name}
 #model_path=$DATA_ROOT/model/Qwen3-30B-A3B-Instruct-2507
 save_path=$DATA_ROOT/ckpts/$experiment_name
 
-# ================= task / agent config =================
-TASK_CONFIG_PATH=$WORKING_DIR/examples/mem_agent/task_config.yaml
-AGENT_LOG_DIR=${AGENT_LOG_DIR:-/tmp/mem_agent}
+# ================= agent config =================
+AGENT_CONFIG_PATH=$WORKING_DIR/examples/workflow/mem_agent/agent_config.yaml
 
 # ================= algorithm =================
 adv_estimator=grpo
@@ -67,7 +66,7 @@ actor_lr=1e-6
 rollout_n_val=1
 loss_agg_mode="token-mean"
 
-save_freq=-1
+save_freq=1
 test_freq=1
 log_val_generations=30
 
@@ -169,18 +168,8 @@ ray job submit --no-wait \
     actor_rollout_ref.rollout.multi_turn.enable=True \
     actor_rollout_ref.rollout.multi_turn.max_parallel_calls=1 \
     actor_rollout_ref.rollout.agent.num_workers=8 \
-    ++actor_rollout_ref.rollout.agent.agent_loop_manager_class=uni_agent.framework.entry.AgentFrameworkRolloutAdapter \
-    ++actor_rollout_ref.rollout.custom.agent_framework.gateway_count=8 \
-    ++actor_rollout_ref.rollout.custom.agent_framework.log_dir=$AGENT_LOG_DIR \
-    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_fqn=uni_agent.framework.task_runner.run_task \
-    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.dispatch_mode=ray_task \
-    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.max_concurrent_sessions=512 \
-    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.trajectory_selection=all \
-    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.task_config_path=$TASK_CONFIG_PATH \
-    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.model_name=$model_name \
-    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.tokenizer_path=$model_path \
-    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.report_reward=True \
-    ++actor_rollout_ref.rollout.custom.agent_framework.use_reward_loop_worker=False \
+    actor_rollout_ref.rollout.agent.agent_loop_config_path=$AGENT_CONFIG_PATH \
+    actor_rollout_ref.rollout.agent.default_agent_loop=mem_agent \
     actor_rollout_ref.rollout.prometheus.enable=True \
     actor_rollout_ref.rollout.prometheus.port=9090 \
     actor_rollout_ref.rollout.prometheus.file=$PROMETHEUS_FILE \
