@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import pytest
@@ -29,11 +30,17 @@ class _FakeModel:
 class _TwoContextAgent(ContextManager, Agent):
     config_model = ContextManagerConfig
 
-    async def context_management(self, raw_data: dict[str, Any]) -> None:
-        await self.update_context(raw_data["prompt"])
-        await self.step({"max_tokens": 11})
-        await self.update_context([{"role": "user", "content": "second context"}])
-        await self.step({"max_tokens": 7})
+    async def run(self, *, sandbox, messages):
+        async with self.context_session(sandbox=sandbox):
+            await self.update_context(messages)
+            await self.step({"max_tokens": 11})
+            await self.update_context([{"role": "user", "content": "second context"}])
+            await self.step({"max_tokens": 7})
+        return self.build_agent_result()
+
+
+class _MissingRunAgent(ContextManager, Agent):
+    config_model = ContextManagerConfig
 
 
 @pytest.mark.asyncio
@@ -62,3 +69,9 @@ async def test_update_context_materializes_independent_segments(monkeypatch):
     assert result.output["response"] == "response-2"
     assert [call[1]["max_tokens"] for call in _FakeModel.instances[0].calls] == [11, 7]
     assert _FakeModel.instances[0].closed
+
+
+def test_context_manager_does_not_implement_agent_run():
+    assert inspect.isabstract(_MissingRunAgent)
+    with pytest.raises(TypeError, match="abstract"):
+        _MissingRunAgent(ContextManagerConfig())

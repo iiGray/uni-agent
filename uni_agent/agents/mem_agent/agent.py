@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 
 from uni_agent.agents.registry import register_agent
 from uni_agent.context_management import ContextManager, ContextManagerConfig
 
-from ..base import Agent
+from ..base import Agent, AgentResult
+
+if TYPE_CHECKING:
+    from uni_agent.sandbox import Sandbox
 
 TEMPLATE = (
     "You are presented with a problem, a section of an article that may contain the answer to the problem, and a "
@@ -70,40 +73,54 @@ class MemAgent(ContextManager, Agent):
 
     config_model = MemAgentConfig
 
-    async def context_management(self, raw_data: dict[str, Any]) -> None:
+    async def run(
+        self,
+        *,
+        sandbox: Sandbox,
+        messages: list[dict[str, Any]],
+        raw_data: dict[str, Any] | None = None,
+    ) -> AgentResult:
+        """Run the MemAgent policy using explicit context-management calls."""
+
+        context_input = dict(raw_data or {})
+        context_input.setdefault("prompt", messages)
+
         cfg: MemAgentConfig = self.config  # type: ignore[assignment]
         tokenizer_path = cfg.tokenizer_path or cfg.model.model_name
         if not tokenizer_path:
             raise ValueError("mem_agent requires agent.tokenizer_path or agent.model.model_name")
         tokenizer = _load_tokenizer(tokenizer_path)
-        prompt, chunks = process(raw_data, tokenizer, cfg.chunk_size)
+        prompt, chunks = process(context_input, tokenizer, cfg.chunk_size)
 
-        memory: str | None = None
-        for chunk in chunks:
-            if self.get_global_step_idx() >= cfg.max_chunks:
-                break
+        async with self.context_session(sandbox=sandbox):
+            memory: str | None = None
+            for chunk in chunks:
+                if self.get_global_step_idx() >= cfg.max_chunks:
+                    break
+                conversation = [
+                    {
+                        "role": "user",
+                        "content": TEMPLATE.format(
+                            prompt=prompt,
+                            memory=memory if memory else "No previous memory",
+                            chunk=chunk,
+                        ),
+                    }
+                ]
+                await self.update_context(conversation)
+                step_output = await self.step(sampling_params={"max_tokens": cfg.max_memorization_length})
+                memory = step_output.response
+
             conversation = [
                 {
                     "role": "user",
-                    "content": TEMPLATE.format(
+                    "content": TEMPLATE_FINAL_BOXED.format(
                         prompt=prompt,
                         memory=memory if memory else "No previous memory",
-                        chunk=chunk,
                     ),
                 }
             ]
             await self.update_context(conversation)
-            step_output = await self.step(sampling_params={"max_tokens": cfg.max_memorization_length})
-            memory = step_output.response
+            await self.step(sampling_params={"max_tokens": cfg.max_final_response_length})
 
-        conversation = [
-            {
-                "role": "user",
-                "content": TEMPLATE_FINAL_BOXED.format(
-                    prompt=prompt,
-                    memory=memory if memory else "No previous memory",
-                ),
-            }
-        ]
-        await self.update_context(conversation)
-        await self.step(sampling_params={"max_tokens": cfg.max_final_response_length})
+        return self.build_agent_result()

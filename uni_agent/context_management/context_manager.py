@@ -6,8 +6,8 @@ import copy
 import logging
 import time
 import uuid
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from pydantic import BaseModel, Field
 
@@ -101,19 +101,26 @@ class ContextManagerResult(BaseModel):
             step.set_reward(reward)
 
 
-class ContextManager(ABC):
+class ContextManager:
     """Mixin that gives an :class:`Agent` explicit context-management methods.
 
     Put this mixin before ``Agent`` in the base-class list so its cooperative
     initializer reaches ``Agent.__init__``::
 
         class MyAgent(ContextManager, Agent):
-            async def context_management(self, raw_data):
-                await self.update_context(...)
-                await self.step()
+            async def run(self, *, sandbox, messages):
+                async with self.context_session(sandbox=sandbox):
+                    await self.update_context(messages)
+                    await self.step()
+                return self.build_agent_result()
 
-    Each :meth:`update_context` call finalizes the current trajectory segment.
-    The gateway recognizes the next unrelated message prefix as a new chain,
+    ``ContextManager`` deliberately does not implement ``Agent.run``. A composed
+    Agent must implement the standard Agent contract itself and use
+    :meth:`context_session`, :meth:`update_context`, :meth:`step`, and
+    :meth:`build_agent_result` inside that method.
+
+    Each ``update_context`` call finalizes the current trajectory segment. The
+    gateway recognizes the next unrelated message prefix as a new chain,
     allowing all context segments to participate in training.
     """
 
@@ -127,16 +134,16 @@ class ContextManager(ABC):
         self._step_idx = 0
         self._total_completion_tokens = 0
         self._interaction_start = 0.0
+        self._context_session_active = False
+        self._context_manager_result: ContextManagerResult | None = None
         self.messages: list[dict[str, Any]] = []
 
-    async def run(
-        self,
-        *,
-        sandbox: Sandbox,
-        messages: list[dict[str, Any]],
-        raw_data: dict[str, Any] | None = None,
-    ) -> AgentResult:
-        """Initialize shared runtime state and execute the agent's policy."""
+    @asynccontextmanager
+    async def context_session(self, *, sandbox: Sandbox) -> AsyncIterator[None]:
+        """Initialize and close the model/tool runtime used by context methods."""
+
+        if self._context_session_active:
+            raise RuntimeError("ContextManager does not support nested context_session() calls")
 
         cfg = self._context_config
         if cfg.model.base_url is None:
@@ -147,6 +154,7 @@ class ContextManager(ABC):
         self._global_step_idx = 0
         self._step_idx = 0
         self._total_completion_tokens = 0
+        self._context_manager_result = None
         self.messages = []
 
         self._toolbox = Toolbox.from_specs(cfg.tools, sandbox=sandbox)
@@ -158,23 +166,34 @@ class ContextManager(ABC):
             tools_schemas=self._toolbox.schemas(),
         )
 
-        context_input = dict(raw_data or {})
-        context_input.setdefault("prompt", copy.deepcopy(messages))
         started_at = time.perf_counter()
+        self._context_session_active = True
         try:
             async with self._toolbox.entered(retry=3, timeout=60):
-                await self.context_management(context_input)
-                self._collect_context_step()
+                yield
         finally:
-            await self._model.aclose()
+            self._collect_context_step()
+            try:
+                await self._model.aclose()
+            finally:
+                self._context_session_active = False
+                self._context_manager_result = ContextManagerResult(
+                    run_id=str(uuid.uuid4()),
+                    execution_time=time.perf_counter() - started_at,
+                    trajectory=self._trajectory,
+                    final_state=self._trajectory[-1] if self._trajectory else ContextStepOutput(),
+                    total_steps=self._global_step_idx,
+                )
 
-        result = ContextManagerResult(
-            run_id=str(uuid.uuid4()),
-            execution_time=time.perf_counter() - started_at,
-            trajectory=self._trajectory,
-            final_state=self._trajectory[-1] if self._trajectory else ContextStepOutput(),
-            total_steps=self._global_step_idx,
-        )
+    def build_agent_result(self) -> AgentResult:
+        """Convert the completed context session into the standard Agent result."""
+
+        if self._context_session_active:
+            raise RuntimeError("build_agent_result() must be called after context_session() exits")
+        if self._context_manager_result is None:
+            raise RuntimeError("No completed context session; call context_session() from run() first")
+
+        result = self._context_manager_result
         final_response = result.final_state.steps[-1].response if result.final_state.steps else ""
         transcript = [message for segment in result.trajectory for message in segment.messages]
         return AgentResult(
@@ -187,13 +206,11 @@ class ContextManager(ABC):
             },
         )
 
-    @abstractmethod
-    async def context_management(self, raw_data: dict[str, Any]) -> None:
-        """Implement the policy using :meth:`update_context` and :meth:`step`."""
-
     async def update_context(self, messages: list[dict[str, Any]]) -> None:
         """Finalize the current segment and continue from a newly built context."""
 
+        if not self._context_session_active:
+            raise RuntimeError("update_context() must be called inside context_session()")
         self._collect_context_step()
         self._track_context_step()
         assert self._current_context_step is not None

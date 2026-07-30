@@ -33,9 +33,11 @@ not need MemAgent-specific fields.
 
 ```python
 class MemAgent(ContextManager, Agent):
-    async def context_management(self, raw_data):
-        await self.update_context(...)
-        memory = (await self.step()).response
+    async def run(self, *, sandbox, messages):
+        async with self.context_session(sandbox=sandbox):
+            await self.update_context(...)
+            memory = (await self.step()).response
+        return self.build_agent_result()
 ```
 
 Every `update_context()` starts a new Gateway trajectory chain. The Task scores

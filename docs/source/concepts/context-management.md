@@ -14,9 +14,7 @@ Put `ContextManager` before `Agent` in the base-class list, and derive the
 Agent's configuration from `ContextManagerConfig`:
 
 ```python
-from typing import Any
-
-from uni_agent.agents import Agent
+from uni_agent.agents import Agent, AgentResult
 from uni_agent.context_management import ContextManager, ContextManagerConfig
 
 
@@ -27,35 +25,42 @@ class MyAgentConfig(ContextManagerConfig):
 class MyAgent(ContextManager, Agent):
     config_model = MyAgentConfig
 
-    async def context_management(self, raw_data: dict[str, Any]) -> None:
-        first_context = [{"role": "user", "content": "Read the first section."}]
-        await self.update_context(first_context)
-        first_result = await self.step({"max_tokens": 512})
+    async def run(self, *, sandbox, messages) -> AgentResult:
+        async with self.context_session(sandbox=sandbox):
+            first_context = [{"role": "user", "content": "Read the first section."}]
+            await self.update_context(first_context)
+            first_result = await self.step({"max_tokens": 512})
 
-        next_context = [
-            {
-                "role": "user",
-                "content": f"Continue from this summary:\n{first_result.response}",
-            }
-        ]
-        await self.update_context(next_context)
-        await self.step({"max_tokens": 512})
+            next_context = [
+                {
+                    "role": "user",
+                    "content": f"Continue from this summary:\n{first_result.response}",
+                }
+            ]
+            await self.update_context(next_context)
+            await self.step({"max_tokens": 512})
+
+        return self.build_agent_result()
 ```
 
-`ContextManager` supplies the normal `Agent.run()` implementation. A Task can
-therefore build and run the composed Agent in the same way as any other Agent.
+`ContextManager` does not implement `run()`. The composed class must implement
+the same `Agent.run()` contract as every other Agent. This keeps Agent behavior
+explicit while reusing the context-management runtime.
 
 ## Context Lifecycle
 
-An Agent implements `context_management()` as its programmable control flow:
+An Agent implements its programmable control flow inside `run()`:
 
-1. `update_context(messages)` finalizes the previous context segment and starts
+1. `context_session(sandbox=...)` initializes and safely closes the shared
+   model and Tool runtime.
+2. `update_context(messages)` finalizes the previous context segment and starts
    a new one from `messages`.
-2. `step(sampling_params)` makes one model call in the active context and
+3. `step(sampling_params)` makes one model call in the active context and
    optionally executes returned Tools.
-3. The Agent may repeat these methods in any order allowed by its policy.
-4. `run()` collects the final segment and returns a `ContextManagerResult`
-   through `AgentResult.output["context_manager_result"]`.
+4. The Agent may repeat these methods in any order allowed by its policy.
+5. After the context session exits, `build_agent_result()` returns the standard
+   `AgentResult`, with the `ContextManagerResult` stored under
+   `output["context_manager_result"]`.
 
 Each segment records its initial prompt messages, full messages, model turns,
 execution time, and reward. `ContextManagerResult.set_reward()` assigns one
