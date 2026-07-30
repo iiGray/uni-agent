@@ -52,6 +52,7 @@ export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/verl:${PYTHONPATH:-}"
 
 ray job submit --no-wait \
     --working-dir="${REPO_ROOT}" \
+    --runtime-env-json="{\"env_vars\": {\"NCCL_DEBUG\": \"INFO\", \"NCCL_P2P_DISABLE\": \"1\", \"NCCL_IB_DISABLE\": \"1\", \"RAY_DEDUP_LOGS\": \"0\"}}" \
     -- python3 -m verl.trainer.main_ppo \
     --config-name=ppo_trainer \
     trainer.use_v1=True \
@@ -123,7 +124,7 @@ ray job submit --no-wait \
     ++actor_rollout_ref.rollout.custom.agent_framework.mask_unfinished_episode=False \
     trainer.project_name="${PROJECT_NAME}" \
     trainer.experiment_name="${EXPERIMENT_NAME}" \
-    trainer.logger="['console','wandb']" \
+    trainer.logger="['console','tensorboard']" \
     trainer.nnodes="${TRAINER_NNODES}" \
     trainer.n_gpus_per_node="${TRAINER_GPUS_PER_NODE}" \
     trainer.val_before_train=False \
