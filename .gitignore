@@ -129,7 +129,3 @@ logs
 log
 outputs
 .history
-
-.gitignore
-
-examples/quickstart/training/train_mem_agent_self.sh
