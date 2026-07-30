@@ -63,10 +63,7 @@ class TaskConfigResolver:
         """Resolve one sample using Task Config → Sample Config → runtime model."""
         task_name = sample_config.get("name")
         if not task_name:
-            if len(self.defaults_by_name) == 1:
-                task_name = list(self.defaults_by_name.keys())[0]
-            else:
-                raise ValueError("sample Task Config requires a 'name'")
+            raise ValueError("sample Task Config requires a 'name'")
 
         if self.defaults_by_name and task_name not in self.defaults_by_name:
             raise ValueError(

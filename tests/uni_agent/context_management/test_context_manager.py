@@ -4,8 +4,9 @@ from typing import Any
 
 import pytest
 
-import uni_agent.agents.workflow as workflow_module
-from uni_agent.agents.workflow import Workflow, WorkflowConfig
+import uni_agent.context_management.context_manager as context_manager_module
+from uni_agent.agents import Agent
+from uni_agent.context_management import ContextManager, ContextManagerConfig
 
 
 class _FakeModel:
@@ -25,20 +26,22 @@ class _FakeModel:
         self.closed = True
 
 
-class _TwoContextWorkflow(Workflow):
-    async def workflow(self, raw_data: dict[str, Any]) -> None:
-        await self.update_context(raw_data["prompt"], insert_skill=False)
+class _TwoContextAgent(ContextManager, Agent):
+    config_model = ContextManagerConfig
+
+    async def context_management(self, raw_data: dict[str, Any]) -> None:
+        await self.update_context(raw_data["prompt"])
         await self.step({"max_tokens": 11})
-        await self.update_context([{"role": "user", "content": "second context"}], insert_skill=False)
+        await self.update_context([{"role": "user", "content": "second context"}])
         await self.step({"max_tokens": 7})
 
 
 @pytest.mark.asyncio
-async def test_workflow_update_context_materializes_independent_segments(monkeypatch):
+async def test_update_context_materializes_independent_segments(monkeypatch):
     _FakeModel.instances.clear()
-    monkeypatch.setattr(workflow_module, "OpenAICompatibleChatModel", _FakeModel)
-    agent = _TwoContextWorkflow(
-        WorkflowConfig(
+    monkeypatch.setattr(context_manager_module, "OpenAICompatibleChatModel", _FakeModel)
+    agent = _TwoContextAgent(
+        ContextManagerConfig(
             model={
                 "base_url": "http://gateway.invalid/v1",
                 "model_name": "policy",
@@ -51,11 +54,11 @@ async def test_workflow_update_context_materializes_independent_segments(monkeyp
         messages=[{"role": "user", "content": "first context"}],
     )
 
-    workflow_result = result.output["workflow_result"]
-    assert workflow_result.total_steps == 2
-    assert len(workflow_result.trajectory) == 2
-    assert workflow_result.trajectory[0].prompt_messages[0]["content"] == "first context"
-    assert workflow_result.trajectory[1].prompt_messages[0]["content"] == "second context"
+    context_result = result.output["context_manager_result"]
+    assert context_result.total_steps == 2
+    assert len(context_result.trajectory) == 2
+    assert context_result.trajectory[0].prompt_messages[0]["content"] == "first context"
+    assert context_result.trajectory[1].prompt_messages[0]["content"] == "second context"
     assert result.output["response"] == "response-2"
     assert [call[1]["max_tokens"] for call in _FakeModel.instances[0].calls] == [11, 7]
     assert _FakeModel.instances[0].closed

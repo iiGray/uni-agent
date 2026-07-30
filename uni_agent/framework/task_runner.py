@@ -25,7 +25,7 @@ async def run_task(
     model_name: str | None = None,
     tokenizer_path: str | None = None,
     report_reward: bool = False,
-    **sample_kwargs: Any,
+    **_: Any,
 ) -> TaskResult:
     """Resolve the sample's task, run it against ``session``, and return its result.
 
@@ -39,11 +39,9 @@ async def run_task(
     the task's reward + info are POSTed back to the session's reward-info endpoint;
     the standalone evaluator reads the returned :class:`TaskResult` directly.
     """
-    sample_config = tools_kwargs.get("task") if tools_kwargs else {}
-    if sample_config is None:
-        sample_config = {}
+    sample_config = tools_kwargs.get("task") if tools_kwargs else None
     if not isinstance(sample_config, dict):
-        raise ValueError("run_task requires tools_kwargs['task'] (the serialized Task Config) to be a dict")
+        raise ValueError("run_task requires tools_kwargs['task'] (the serialized Task Config)")
 
     resolver = TaskConfigResolver.from_file(task_config_path) if task_config_path else TaskConfigResolver()
     task = resolver.resolve(
@@ -56,12 +54,8 @@ async def run_task(
     )
     if tokenizer_path is not None:
         task.setdefault("agent", {})["tokenizer_path"] = tokenizer_path
-
     if raw_prompt is not None and not task.get("prompt"):
         task["prompt"] = raw_prompt
-
-    if sample_kwargs:
-        task.setdefault("metadata", {}).update(sample_kwargs)
 
     task_name = task.get("name")
     logger.info("run_task start: task=%s sample_index=%s", task_name, sample_index)

@@ -58,6 +58,7 @@ nav:
       - Sandbox: concepts/sandbox.md
       - Tool and Toolbox: concepts/tool-and-toolbox.md
       - Agent: concepts/agent.md
+      - Context Management: concepts/context-management.md
       - Task and Reward: concepts/task-and-reward.md
       - Gateway and Trajectories: concepts/gateway-and-trajectories.md
   - Benchmark:

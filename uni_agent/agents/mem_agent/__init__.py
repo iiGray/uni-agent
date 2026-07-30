@@ -1,7 +1,7 @@
-"""MemAgent example built on the programmable workflow agent."""
+"""MemAgent example built by composing Agent with ContextManager."""
 
 from __future__ import annotations
 
-from .agent import MemAgent, MemAgentConfig, MemAgentWorkflow
+from .agent import MemAgent, MemAgentConfig
 
-__all__ = ["MemAgent", "MemAgentConfig", "MemAgentWorkflow"]
+__all__ = ["MemAgent", "MemAgentConfig"]

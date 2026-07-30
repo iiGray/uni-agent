@@ -1,0 +1,58 @@
+# MemAgent
+
+MemAgent is the reference Agent for `uni_agent.context_management`. It reads a
+long document in token chunks, starts a new model context for every chunk,
+carries forward a compact memory, and answers the original question from the
+final memory.
+
+The implementation is split by responsibility:
+
+- `uni_agent/context_management/` contains the reusable `ContextManager` mixin.
+- `uni_agent/agents/mem_agent/` contains the MemAgent policy.
+- `uni_agent/tasks/mem_agent/` contains the task and final-answer reward.
+- `examples/mem_agent/dataset.py` adapts long-context dataset rows to the normal
+  Uni-Agent task-runner payload.
+- `examples/mem_agent/run_train.sh` is a verl v1 FSDP2 training recipe.
+
+## Data
+
+The Parquet rows must contain:
+
+- `prompt`: an OpenAI-style message list containing the question.
+- `context`: a string or nested list/dictionary containing the long document.
+- `reward_model.ground_truth` (or `ground_truth`): one answer or a list of
+  accepted answers.
+
+`MemAgentDataset` moves the context and answer into
+`tools_kwargs.task.metadata`, so the generic agent framework and task runner do
+not need MemAgent-specific fields.
+
+## Context Management
+
+`MemAgent` composes the two reusable bases:
+
+```python
+class MemAgent(ContextManager, Agent):
+    async def context_management(self, raw_data):
+        await self.update_context(...)
+        memory = (await self.step()).response
+```
+
+Every `update_context()` starts a new Gateway trajectory chain. The Task scores
+the final boxed answer and posts the session-level reward; the framework assigns
+that reward to every context segment emitted by the session.
+
+## Training
+
+Set the required paths and launch from the repository root:
+
+```bash
+MODEL_PATH=/path/to/Qwen3-8B \
+TRAIN_FILE=/path/to/hotpotqa_train.parquet \
+VAL_FILE=/path/to/hotpotqa_dev.parquet \
+bash examples/mem_agent/run_train.sh
+```
+
+The recipe uses `verl.trainer.main_ppo` with the v1 `separate_async` topology.
+Trainer and rollout GPU counts are configurable through environment variables
+in the script.

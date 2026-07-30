@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from uni_agent.agents.workflow import AgentWorkflowResult
+from uni_agent.context_management import ContextManagerResult
 
 from ..base import Task, TaskConfig, TaskResult
 from ..registry import register_task
@@ -43,17 +43,22 @@ class MemAgentTask(Task):
         if not ground_truths:
             reward_model = cfg.metadata.get("reward_model", {})
             raw_ground_truth = reward_model.get("ground_truth", []) if isinstance(reward_model, dict) else []
-            ground_truths = [raw_ground_truth] if isinstance(raw_ground_truth, str) else list(raw_ground_truth)
+            if isinstance(raw_ground_truth, str):
+                ground_truths = [raw_ground_truth]
+            elif isinstance(raw_ground_truth, list | tuple):
+                ground_truths = [str(answer) for answer in raw_ground_truth]
+            elif raw_ground_truth is not None:
+                ground_truths = [str(raw_ground_truth)]
 
         reward = compute_score(response, ground_truths)
-        workflow_result = agent_result.output.get("workflow_result")
-        if isinstance(workflow_result, AgentWorkflowResult):
-            workflow_result.set_reward(reward)
+        context_manager_result = agent_result.output.get("context_manager_result")
+        if isinstance(context_manager_result, ContextManagerResult):
+            context_manager_result.set_reward(reward)
 
         return TaskResult(
             reward=reward,
             accuracy=reward,
-            info={
+            extra_info={
                 "response": response,
                 "num_contexts": agent_result.info.get("num_contexts", 0),
                 "total_steps": agent_result.info.get("total_steps", 0),

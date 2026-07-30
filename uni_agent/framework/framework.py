@@ -114,19 +114,21 @@ def _run_agent_runner_ray_task(
     *,
     runner_fqn: str,
     runner_kwargs: dict[str, object],
+    raw_prompt,
     session: SessionHandle,
     sample_index: int,
+    tools_kwargs: object | None,
     log_context: LogContext | None,
-    **sample_fields: Any,
 ) -> None:
     """Run only the user runner in Ray; parent owns session lifecycle outputs."""
     runner = _materialize_runner(runner_fqn, runner_kwargs)
     with _log_scope(log_context):
         asyncio.run(
             runner(
+                raw_prompt=raw_prompt,
                 session=session,
                 sample_index=sample_index,
-                **sample_fields,
+                **({"tools_kwargs": tools_kwargs} if tools_kwargs is not None else {}),
             )
         )
 
@@ -677,18 +679,20 @@ class OpenAICompatibleAgentFramework(AgentFramework):
                     object_ref = _run_agent_runner_ray_task.remote(
                         runner_fqn=runner_config.runner_fqn,
                         runner_kwargs=runner_config.runner_kwargs,
+                        raw_prompt=raw_prompt,
                         session=session,
                         sample_index=sample_index,
+                        tools_kwargs=tools_kwargs,
                         log_context=task_log,
-                        **sample_fields,
                     )
                     await object_ref
                 else:
                     runner = self._inline_runners[runner_name]
                     await runner(
+                        raw_prompt=raw_prompt,
                         session=session,
                         sample_index=sample_index,
-                        **sample_fields,
+                        **({"tools_kwargs": tools_kwargs} if tools_kwargs is not None else {}),
                     )
                 session_trajectories = await self.gateway_manager.finalize_session(session_id)
                 session_trajectories = _select_session_trajectories(
@@ -714,10 +718,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
 
             if annotations is None:
                 logger.warning("session %s: no reward available; rm_scores=0 for this sample", session_id)
-                result_trajectories = [
-                    replace(traj, reward_score=0.0)
-                    for traj in session_trajectories
-                ]
+                result_trajectories = session_trajectories
             else:
                 logger.info("session %s: scored via %s", session_id, reward_source)
                 result_trajectories = [

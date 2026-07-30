@@ -1,4 +1,4 @@
-"""MemAgent context-management example."""
+"""MemAgent: an Agent composed with the reusable ContextManager mixin."""
 
 from __future__ import annotations
 
@@ -8,41 +8,31 @@ from typing import Any
 from pydantic import Field
 
 from uni_agent.agents.registry import register_agent
-from uni_agent.agents.workflow import Workflow, WorkflowConfig
+from uni_agent.context_management import ContextManager, ContextManagerConfig
+
+from ..base import Agent
+
+TEMPLATE = (
+    "You are presented with a problem, a section of an article that may contain the answer to the problem, and a "
+    "previous memory. Please read the provided section carefully and update the memory with the new information that "
+    "helps to answer the problem. Be sure to retain all relevant details from the previous memory while adding any "
+    "new, useful information.\n\n"
+    "<problem>\n{prompt}\n</problem>\n\n"
+    "<memory>\n{memory}\n</memory>\n\n"
+    "<section>\n{chunk}\n</section>\n\n"
+    "Updated memory:\n"
+)
+
+TEMPLATE_FINAL_BOXED = (
+    "You are presented with a problem and a previous memory. Please answer the problem based on the previous memory "
+    "and put the answer in \\boxed{{}}.\n\n"
+    "<problem>\n{prompt}\n</problem>\n\n"
+    "<memory>\n{memory}\n</memory>\n\n"
+    "Your answer:\n"
+)
 
 
-TEMPLATE = """You are presented with a problem, a section of an article that may contain the answer to the problem, and a previous memory. Please read the provided section carefully and update the memory with the new information that helps to answer the problem. Be sure to retain all relevant details from the previous memory while adding any new, useful information.
-
-<problem>
-{prompt}
-</problem>
-
-<memory>
-{memory}
-</memory>
-
-<section>
-{chunk}
-</section>
-
-Updated memory:
-"""
-
-TEMPLATE_FINAL_BOXED = """You are presented with a problem and a previous memory. Please answer the problem based on the previous memory and put the answer in \\boxed{{}}.
-
-<problem>
-{prompt}
-</problem>
-
-<memory>
-{memory}
-</memory>
-
-Your answer:
-"""
-
-
-class MemAgentConfig(WorkflowConfig):
+class MemAgentConfig(ContextManagerConfig):
     """Configuration for chunked-context memory updates."""
 
     name: str = "mem_agent"
@@ -75,12 +65,12 @@ def process(item: dict[str, Any], tokenizer, chunk_size: int) -> tuple[str, list
 
 
 @register_agent("mem_agent")
-class MemAgent(Workflow):
+class MemAgent(ContextManager, Agent):
     """Read long input in chunks and carry only a compact memory between contexts."""
 
     config_model = MemAgentConfig
 
-    async def workflow(self, raw_data: dict[str, Any]) -> None:
+    async def context_management(self, raw_data: dict[str, Any]) -> None:
         cfg: MemAgentConfig = self.config  # type: ignore[assignment]
         tokenizer_path = cfg.tokenizer_path or cfg.model.model_name
         if not tokenizer_path:
@@ -102,7 +92,7 @@ class MemAgent(Workflow):
                     ),
                 }
             ]
-            await self.update_context(conversation, insert_skill=False)
+            await self.update_context(conversation)
             step_output = await self.step(sampling_params={"max_tokens": cfg.max_memorization_length})
             memory = step_output.response
 
@@ -115,9 +105,5 @@ class MemAgent(Workflow):
                 ),
             }
         ]
-        await self.update_context(conversation, insert_skill=False)
+        await self.update_context(conversation)
         await self.step(sampling_params={"max_tokens": cfg.max_final_response_length})
-
-
-# Compatibility name for existing configs that referred to the example class.
-MemAgentWorkflow = MemAgent

@@ -13,8 +13,8 @@ from typing import Any
 from uuid import uuid4
 
 from verl.utils.tokenizer import normalize_token_ids
-from verl.utils.chat_template import apply_chat_template as _apply_chat_template
-from verl.utils.chat_template import initialize_system_prompt
+from verl.utils.tokenizer.chat_template import apply_chat_template as _apply_chat_template
+from verl.utils.tokenizer.chat_template import initialize_system_prompt
 
 logger = logging.getLogger("gateway")
 
