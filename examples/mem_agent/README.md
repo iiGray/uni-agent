@@ -12,7 +12,9 @@ The implementation is split by responsibility:
 - `uni_agent/tasks/mem_agent/` contains the task and final-answer reward.
 - `examples/mem_agent/dataset.py` adapts long-context dataset rows to the normal
   Uni-Agent task-runner payload.
-- `examples/mem_agent/run_train.sh` is a verl v1 FSDP2 training recipe.
+- `examples/quickstart/training/train_mem_agent.sh` is the canonical verl v1
+  FSDP2 training recipe. `examples/mem_agent/run_train.sh` remains as a
+  compatibility entrypoint.
 
 ## Data
 
@@ -52,7 +54,7 @@ Set the required paths and launch from the repository root:
 MODEL_PATH=/path/to/Qwen3-8B \
 TRAIN_FILE=/path/to/hotpotqa_train.parquet \
 VAL_FILE=/path/to/hotpotqa_dev.parquet \
-bash examples/mem_agent/run_train.sh
+bash examples/quickstart/training/train_mem_agent.sh
 ```
 
 The recipe uses `verl.trainer.main_ppo` with the v1 `separate_async` topology.
