@@ -12,7 +12,7 @@ cd "${REPO_ROOT}"
 : "${VAL_FILE:?Set VAL_FILE to the validation Parquet file}"
 
 TOKENIZER_PATH="${TOKENIZER_PATH:-${MODEL_PATH}}"
-TASK_CONFIG="${TASK_CONFIG:-examples/mem_agent/task_config.yaml}"
+TASK_CONFIG="${TASK_CONFIG:-examples/quickstart/training/task_config_mem_agent.yaml}"
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-$(basename "${MODEL_PATH}")}"
 
 PROJECT_NAME="${PROJECT_NAME:-mem_agent}"
