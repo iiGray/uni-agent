@@ -293,6 +293,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         processor=None,
         rollout_config=None,
         log_dir: str | None = None,
+        mask_unfinished_episode: bool = False,
     ):
         self.gateway_manager = gateway_manager
         self.runner_registry = runner_registry
@@ -309,6 +310,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         self._runner_semaphores: dict[str, asyncio.Semaphore] = {}
         self._semaphore_loop: asyncio.AbstractEventLoop | None = None
         self._log_dir = log_dir
+        self._mask_unfinished_episode = mask_unfinished_episode
 
     @classmethod
     def from_config(
@@ -338,6 +340,10 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         if not bool(af_cfg.get("use_reward_loop_worker", True)):
             reward_loop_worker_handles = None
 
+        mask_unfinished_episode = af_cfg.get("mask_unfinished_episode", False)
+        if type(mask_unfinished_episode) is not bool:
+            raise ValueError("actor_rollout_ref.rollout.custom.agent_framework.mask_unfinished_episode must be a bool")
+
         return cls(
             gateway_manager=gateway_manager,
             runner_registry=runner_registry,
@@ -345,6 +351,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
             processor=processor,
             rollout_config=config.actor_rollout_ref.rollout,
             log_dir=log_dir,
+            mask_unfinished_episode=mask_unfinished_episode,
         )
 
     def _build_session_sampling_params(
@@ -401,11 +408,13 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         )
         logger.info(
             "generate_sequences summary: num_input_prompts=%s num_success_sessions=%s "
-            "num_failed_sessions=%s num_success_outputs=%s num_failed_uids=%s failure_reasons=%s",
+            "num_failed_sessions=%s num_success_outputs=%s num_unfinished_episodes=%s "
+            "num_failed_uids=%s failure_reasons=%s",
             stats["num_input_prompts"],
             stats["num_success_sessions"],
             stats["num_failed_sessions"],
             stats["num_success_outputs"],
+            stats["num_unfinished_episodes"],
             stats["num_failed_uids"],
             stats["failure_reasons"][:3],
         )
@@ -450,6 +459,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
             "num_success_sessions": 0,
             "num_failed_sessions": 0,
             "num_success_outputs": 0,
+            "num_unfinished_episodes": 0,
             "num_failed_uids": 0,
             "failure_reasons": failure_reasons,
         }
@@ -466,6 +476,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
             stats["num_success_sessions"] += outcome["num_success_sessions"]
             stats["num_failed_sessions"] += outcome["num_failed_sessions"]
             stats["num_success_outputs"] += outcome["num_success_outputs"]
+            stats["num_unfinished_episodes"] += outcome["num_unfinished_episodes"]
             stats["num_failed_uids"] += outcome["num_failed_uids"]
             failure_reasons.extend(outcome["failure_reasons"])
         return stats
@@ -505,6 +516,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         success_sessions = 0
         failed_sessions = 0
         success_outputs = 0
+        unfinished_episodes = 0
         failure_reasons: list[str] = []
         for session_index, outcome in enumerate(outcomes):
             if isinstance(outcome, Exception):
@@ -538,6 +550,10 @@ class OpenAICompatibleAgentFramework(AgentFramework):
             else:
                 success_sessions += 1
                 success_outputs += len(trajectories)
+                # One session is one episode; its trajectories all carry the same
+                # session-level completion flag, so this counts episodes, not tokens.
+                if any(traj.reward_info.get("finished") is False for traj in trajectories):
+                    unfinished_episodes += 1
 
         if success_sessions > 0:
             await tq.async_kv_put(key=uid, partition_id=partition_id, tag={"status": "finished"})
@@ -550,6 +566,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
             "num_success_sessions": success_sessions,
             "num_failed_sessions": failed_sessions,
             "num_success_outputs": success_outputs,
+            "num_unfinished_episodes": unfinished_episodes,
             "num_failed_uids": failed_uids,
             "failure_reasons": failure_reasons,
         }
@@ -723,10 +740,12 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         lines = [f"session {session_id}: {len(trajectories)} trajectory(ies)"]
         for i, traj in enumerate(trajectories):
             model_tokens = sum(traj.response_mask) if traj.response_mask else 0
+            finished = traj.reward_info.get("finished")
             reason = (traj.extra_fields or {}).get("materialization_reason")
             lines.append(
                 f"  [{i}] turns={traj.num_turns} prompt_tokens={len(traj.prompt_ids)} "
                 f"response_tokens={len(traj.response_ids)} model_tokens={model_tokens} "
+                f"finished={finished} "
                 f"logprobs={'yes' if traj.response_logprobs else 'no'} "
                 f"experts={'yes' if traj.routed_experts is not None else 'no'} "
                 f"reward_score={traj.reward_score} reward_info={traj.reward_info or {}}"
@@ -776,6 +795,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         extra = traj.extra_fields or {}
         return {
             "num_turns": traj.num_turns,
+            "finished": traj.reward_info.get("finished"),
             "reward_score": traj.reward_score,
             "reward_info": traj.reward_info or {},
             "reward_extra_info": extra.get("reward_extra_info"),
@@ -792,14 +812,18 @@ class OpenAICompatibleAgentFramework(AgentFramework):
     ) -> list[tuple[float, dict[str, object]]] | None:
         """Score from the reward the runner posted to the session, if any.
 
-        reward_score = the posted ``reward``; anything else posted (e.g. ``acc``) rides
-        along as reward_extra_info. See ``task_runner._post_reward_info`` for what's posted.
+        reward_score = the posted ``reward``; anything else posted (e.g. ``acc``)
+        rides along as reward_extra_info. ``finished`` is dropped instead: the
+        framework consumes it directly as a completion fact, so it is not a reward
+        metric. See ``task_runner._post_reward_info`` for what's posted.
         """
         reward_info = dict(session_trajectories[-1].reward_info or {})
         reward = reward_info.pop("reward", None)
+        reward_info.pop("finished", None)
         if reward is None:
             return None
-        return [(float(reward), reward_info)] * len(session_trajectories)
+        # Each trajectory needs its own dict: downstream code merges into it.
+        return [(float(reward), dict(reward_info)) for _ in session_trajectories]
 
     async def _score_trajectories(
         self,
@@ -834,8 +858,9 @@ class OpenAICompatibleAgentFramework(AgentFramework):
                 f"RewardLoopWorker result missing 'reward_score' key or invalid for uid={sample_fields.get('uid')}"
             )
         score = float(result["reward_score"])
-        extra = dict(result.get("reward_extra_info") or {})
-        return [(score, extra)] * len(session_trajectories)
+        extra = result.get("reward_extra_info") or {}
+        # Each trajectory needs its own dict: downstream code merges into it.
+        return [(score, dict(extra)) for _ in session_trajectories]
 
     def _extract_sample_fields(self, *, prompts: TensorDict, sample_index: int) -> dict[str, object]:
         sample_fields = {}
@@ -892,7 +917,15 @@ class OpenAICompatibleAgentFramework(AgentFramework):
     ) -> tuple[dict[str, object], dict[str, object]]:
         prompts = torch.tensor(trajectory.prompt_ids, dtype=torch.long)
         responses = torch.tensor(trajectory.response_ids, dtype=torch.long)
-        response_mask = torch.tensor(trajectory.response_mask, dtype=torch.long)
+        source_response_mask = torch.tensor(trajectory.response_mask, dtype=torch.long)
+        finished = trajectory.reward_info.get("finished")
+        if finished is not None and type(finished) is not bool:
+            raise ValueError("reward_info.finished must be a bool or null")
+        response_mask = (
+            torch.zeros_like(source_response_mask)
+            if self._mask_unfinished_episode and finished is False
+            else source_response_mask
+        )
         input_ids = torch.cat([prompts, responses], dim=0)
         attention_mask = torch.ones_like(input_ids, dtype=torch.long)
         multi_modal_inputs = compute_multi_modal_inputs(
@@ -913,8 +946,6 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         field: dict[str, object] = {
             "prompts": prompts,
             "responses": responses,
-            "response_mask": response_mask,
-            "loss_mask": response_mask,
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "position_ids": position_ids,
@@ -934,6 +965,9 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         extra_fields = dict(trajectory.extra_fields)
         extra_fields.pop("materialization_reason", None)
         field.update(extra_fields)
+        # Framework-owned masks must win over same-named Gateway extra fields.
+        field["response_mask"] = response_mask
+        field["loss_mask"] = response_mask
         field.pop("multi_modal_data", None)
         for key in ("uid", "raw_prompt", "data_source", "reward_model", "extra_info", "tools_kwargs", "agent_name"):
             if key in sample_fields:

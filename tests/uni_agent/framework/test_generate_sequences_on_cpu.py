@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import numpy as np
 import pytest
@@ -82,10 +83,14 @@ async def _build_framework_with_agent_runners(
     n: int = 1,
     val_n: int = 1,
     log_dir: str | None = None,
+    mask_unfinished_episode: bool = False,
 ):
     from omegaconf import OmegaConf
 
-    agent_framework_cfg: dict[str, object] = {"agent_runners": agent_runners}
+    agent_framework_cfg: dict[str, object] = {
+        "agent_runners": agent_runners,
+        "mask_unfinished_episode": mask_unfinished_episode,
+    }
     if log_dir is not None:
         agent_framework_cfg["log_dir"] = log_dir
 
@@ -547,7 +552,7 @@ async def test_generate_sequences_writes_tq_schema_for_each_session(monkeypatch,
                         ],
                         dtype=np.uint8,
                     ),
-                    extra_fields={"materialization_reason": "max_response_length"},
+                    extra_fields={"materialization_reason": "max_trajectory_length"},
                 )
             ],
             "session-sample-0-rollout-1": [_trajectory(response_logprobs=[-0.3, -0.4])],
@@ -596,8 +601,9 @@ async def test_generate_sequences_writes_tq_schema_for_each_session(monkeypatch,
         "response_len": 2,
         "seq_len": 4,
         "uid": "uid-0",
-        "materialization_reason": "max_response_length",
+        "materialization_reason": "max_trajectory_length",
     }
+    assert "finished" not in tag
     assert "length_truncated" not in tag
     assert "traj_exit_reason" not in tag
     assert "materialization_reason" not in fields
@@ -635,6 +641,132 @@ async def test_generate_sequences_writes_tq_schema_for_each_session(monkeypatch,
     assert "multi_modal_data" not in fields.keys()
 
 
+@pytest.mark.asyncio
+async def test_generate_sequences_masks_unfinished_trajectory_without_dropping_it(fake_tq):
+    runtime = _FakeGatewayManager(
+        {
+            "session-sample-0-rollout-0": [
+                _trajectory(
+                    response_ids=[20, 21, 22],
+                    response_mask=[1, 0, 1],
+                    reward_info={"reward": 0.5, "finished": False},
+                    extra_fields={
+                        "response_mask": torch.ones(3, dtype=torch.long),
+                        "loss_mask": torch.ones(3, dtype=torch.long),
+                    },
+                )
+            ]
+        }
+    )
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=runtime,
+        mask_unfinished_episode=True,
+    )
+
+    await framework.generate_sequences(_build_prompts(count=1, global_steps=7))
+
+    batch = fake_tq.batch_puts[0]
+    assert batch["keys"] == ["uid-0_0_0"]
+    assert batch["fields"]["responses"][0].tolist() == [20, 21, 22]
+    assert batch["fields"]["response_mask"][0].tolist() == [0, 0, 0]
+    assert batch["fields"]["loss_mask"][0].tolist() == [0, 0, 0]
+    assert batch["fields"]["rm_scores"][0].tolist() == [0.0, 0.0, 0.5]
+    assert batch["tags"][0]["status"] == "success"
+    assert "finished" not in batch["tags"][0]
+    assert "finished" not in batch["fields"].keys()
+    assert tu.get(batch["fields"], "reward_extra_info") == [{}]
+    assert fake_tq.puts == [{"key": "uid-0", "partition_id": "train", "tag": {"status": "finished"}}]
+
+
+@pytest.mark.asyncio
+async def test_unfinished_trajectory_remains_trainable_when_masking_is_disabled(fake_tq):
+    runtime = _FakeGatewayManager(
+        {
+            "session-sample-0-rollout-0": [
+                _trajectory(
+                    response_ids=[20, 21],
+                    response_mask=[1, 1],
+                    reward_info={"reward": 0.5, "finished": False},
+                )
+            ]
+        }
+    )
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=runtime,
+    )
+
+    await framework.generate_sequences(_build_prompts(count=1, global_steps=7))
+
+    batch = fake_tq.batch_puts[0]
+    assert batch["fields"]["response_mask"][0].tolist() == [1, 1]
+    assert batch["fields"]["loss_mask"][0].tolist() == [1, 1]
+    assert "finished" not in batch["tags"][0]
+    assert "finished" not in batch["fields"].keys()
+
+
+@pytest.mark.asyncio
+async def test_masking_keeps_trajectory_trainable_when_completion_metadata_is_missing(fake_tq):
+    runtime = _FakeGatewayManager(
+        {
+            "session-sample-0-rollout-0": [
+                _trajectory(
+                    response_ids=[20, 21],
+                    response_mask=[1, 0],
+                    reward_info={"reward": 0.5},
+                )
+            ]
+        }
+    )
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=runtime,
+        mask_unfinished_episode=True,
+    )
+
+    await framework.generate_sequences(_build_prompts(count=1, global_steps=7))
+
+    batch = fake_tq.batch_puts[0]
+    assert batch["fields"]["response_mask"][0].tolist() == [1, 0]
+    assert batch["fields"]["loss_mask"][0].tolist() == [1, 0]
+
+
+@pytest.mark.asyncio
+async def test_generate_sequences_reports_unfinished_episode_count(fake_tq, caplog):
+    # A session materializing two trajectories is still one episode: completion is
+    # session-level metadata copied onto every trajectory it produced.
+    runtime = _FakeGatewayManager(
+        {
+            "session-sample-0-rollout-0": [
+                _trajectory(reward_info={"reward": 0.5, "finished": False}),
+                _trajectory(reward_info={"reward": 0.5, "finished": False}),
+            ]
+        }
+    )
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=runtime,
+        mask_unfinished_episode=True,
+    )
+
+    with caplog.at_level(logging.INFO, logger="uni_agent.framework.framework"):
+        await framework.generate_sequences(_build_prompts(count=1, global_steps=7))
+
+    assert "num_success_outputs=2" in caplog.text
+    assert "num_unfinished_episodes=1" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_framework_rejects_non_boolean_masking_config():
+    with pytest.raises(ValueError, match="mask_unfinished_episode must be a bool"):
+        await _build_framework_with_agent_runners(
+            agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+            gateway_manager=_FakeGatewayManager({}),
+            mask_unfinished_episode="true",  # type: ignore[arg-type]
+        )
+
+
 def test_align_routed_experts_preserves_backend_dtype():
     aligned = _align_routed_experts(np.array([[[256, 511]]], dtype=np.uint16), seq_len=2)
 
@@ -651,7 +783,7 @@ async def test_generate_sequences_batches_length_trajectory_before_normal_trajec
             "session-sample-0-rollout-0": [
                 _trajectory(
                     response_ids=[20],
-                    extra_fields={"materialization_reason": "max_response_length"},
+                    extra_fields={"materialization_reason": "max_trajectory_length"},
                 ),
                 _trajectory(response_ids=[21]),
             ]
@@ -667,7 +799,7 @@ async def test_generate_sequences_batches_length_trajectory_before_normal_trajec
     assert len(fake_tq.batch_puts) == 1
     batch = fake_tq.batch_puts[0]
     assert batch["keys"] == ["uid-0_0_0", "uid-0_0_1"]
-    assert batch["tags"][0]["materialization_reason"] == "max_response_length"
+    assert batch["tags"][0]["materialization_reason"] == "max_trajectory_length"
     assert "materialization_reason" not in batch["tags"][1]
     assert "materialization_reason" not in batch["fields"].keys()
     assert batch["fields"]["responses"][0].tolist() == [20]
