@@ -1,4 +1,4 @@
-"""Task wrapper for MemAgent training and evaluation."""
+"""HotpotQA task for long-context question answering."""
 
 from __future__ import annotations
 
@@ -11,22 +11,22 @@ from ..registry import register_task
 from .reward import compute_score
 
 
-class MemAgentTaskConfig(TaskConfig):
-    name: str = "mem_agent"
+class HotpotQATaskConfig(TaskConfig):
+    name: str = "hotpotqa"
     ground_truth: list[str] = Field(
         default_factory=list,
         description="Accepted answers; falls back to metadata.reward_model.ground_truth.",
     )
 
 
-@register_task("mem_agent")
-class MemAgentTask(Task):
-    """Run MemAgent and broadcast its final-answer reward to every context chain."""
+@register_task("hotpotqa")
+class HotpotQATask(Task):
+    """Score a HotpotQA answer and broadcast its reward to every context chain."""
 
-    config_model = MemAgentTaskConfig
+    config_model = HotpotQATaskConfig
 
     async def run(self) -> TaskResult:
-        cfg: MemAgentTaskConfig = self.config  # type: ignore[assignment]
+        cfg: HotpotQATaskConfig = self.config  # type: ignore[assignment]
         raw_data = dict(cfg.metadata)
         raw_data["prompt"] = cfg.prompt
 

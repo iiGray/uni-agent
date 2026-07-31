@@ -29,7 +29,7 @@ def build_task_config(row: dict[str, Any]) -> dict[str, Any]:
         existing_tools_kwargs = {}
     existing_task = existing_tools_kwargs.get("task")
     task = dict(existing_task) if isinstance(existing_task, dict) else {}
-    task.setdefault("name", "mem_agent")
+    task.setdefault("name", "hotpotqa")
 
     metadata = dict(task.get("metadata") or {})
     context = row.get("context")

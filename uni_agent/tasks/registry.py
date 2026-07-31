@@ -22,7 +22,7 @@ TASK_REGISTRY: dict[str, type[Task]] = {}
 TASK_MODULES: dict[str, str] = {
     "swe_bench": "uni_agent.tasks.swe_bench.task",
     "swe_rebench": "uni_agent.tasks.swe_rebench.task",
-    "mem_agent": "uni_agent.tasks.mem_agent.task",
+    "hotpotqa": "uni_agent.tasks.hotpotqa.task",
 }
 
 

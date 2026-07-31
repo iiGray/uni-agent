@@ -1,4 +1,4 @@
-"""Reward used by the MemAgent long-context example."""
+"""Reward used by the HotpotQA task."""
 
 from __future__ import annotations
 

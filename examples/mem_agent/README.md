@@ -9,14 +9,13 @@ The implementation is split by responsibility:
 
 - `uni_agent/context_management/` contains the reusable `ContextManager` mixin.
 - `uni_agent/agents/mem_agent/` contains the MemAgent policy.
-- `uni_agent/tasks/mem_agent/` contains the task and final-answer reward.
+- `uni_agent/tasks/hotpotqa/` contains the HotpotQA task and final-answer reward.
 - `examples/mem_agent/dataset.py` adapts long-context dataset rows to the normal
   Uni-Agent task-runner payload.
-- `examples/quickstart/training/task_config_mem_agent.yaml` contains the
-  MemAgent Task and context-management defaults.
+- `examples/quickstart/training/task_config_hotpotqa.yaml` contains the
+  HotpotQA task and MemAgent context-management defaults.
 - `examples/quickstart/training/train_mem_agent.sh` is the canonical verl v1
-  FSDP2 training recipe. `examples/mem_agent/run_train.sh` remains as a
-  compatibility entrypoint.
+  FSDP2 training recipe.
 
 ## Data
 

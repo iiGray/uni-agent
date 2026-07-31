@@ -9,8 +9,8 @@ import uni_agent.context_management.context_manager as context_manager_module
 from examples.mem_agent.dataset import build_task_config, context_to_text
 from uni_agent.agents import AgentResult
 from uni_agent.agents.mem_agent import MemAgent, MemAgentConfig
-from uni_agent.tasks.mem_agent import MemAgentTask, MemAgentTaskConfig
-from uni_agent.tasks.mem_agent.reward import compute_score, last_boxed_only_string, remove_boxed
+from uni_agent.tasks.hotpotqa import HotpotQATask, HotpotQATaskConfig
+from uni_agent.tasks.hotpotqa.reward import compute_score, last_boxed_only_string, remove_boxed
 
 
 class _FakeTokenizer:
@@ -108,7 +108,7 @@ def test_mem_agent_dataset_builds_standard_task_payload():
 
     assert context_to_text(row["context"]) == "Title\nalpha\nbeta"
     assert task == {
-        "name": "mem_agent",
+        "name": "hotpotqa",
         "metadata": {
             "context": "Title\nalpha\nbeta",
             "reward_model": {"ground_truth": ["answer"]},
@@ -117,9 +117,9 @@ def test_mem_agent_dataset_builds_standard_task_payload():
 
 
 @pytest.mark.asyncio
-async def test_mem_agent_task_scores_final_response(monkeypatch):
-    task = MemAgentTask(
-        MemAgentTaskConfig(
+async def test_hotpotqa_task_scores_final_response(monkeypatch):
+    task = HotpotQATask(
+        HotpotQATaskConfig(
             prompt=[{"role": "user", "content": "question"}],
             metadata={
                 "context": "long context",
