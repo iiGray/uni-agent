@@ -108,7 +108,6 @@ class AgentFrameworkRolloutAdapter:
         # Driver-owned so the gateway actors outlive the framework worker; also
         # the handle through which teardown can be driven once a call site exists.
         self.gateway_manager = None
-        self.replay_buffer = None
 
     @classmethod
     def create(
@@ -118,7 +117,7 @@ class AgentFrameworkRolloutAdapter:
         llm_client,
         teacher_client=None,
         reward_loop_worker_handles=None,
-        **kwargs,
+        **_,
     ) -> AgentFrameworkRolloutAdapter:
         if teacher_client is not None:
             raise ValueError(
@@ -140,19 +139,12 @@ class AgentFrameworkRolloutAdapter:
         instance = cls()
         instance.framework_worker = framework_worker
         instance.gateway_manager = gateway_manager
-        instance.replay_buffer = kwargs.get("replay_buffer")
         return instance
 
     def generate_sequences(self, prompts) -> None:
         """Submit a TQ batch generation task without waiting for rollout results."""
         if self.framework_worker is None:
             raise RuntimeError("framework must be initialized before generate_sequences")
-
-        if self.replay_buffer is not None:
-            global_steps = prompts["global_steps"]
-            partition_id = "train" if "validate" not in prompts else "val"
-            items = {uid: {"global_steps": global_steps, "status": "running"} for uid in prompts["uid"]}
-            self.replay_buffer.add(partition_id, items)
 
         self.framework_worker.generate_sequences.remote(prompts)
         return None
