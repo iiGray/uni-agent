@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from uni_agent.agents.mem_agent import ContextManagerResult
+
 from ..base import Task, TaskConfig, TaskResult
 from ..registry import register_task
 from .reward import compute_score
@@ -49,6 +51,10 @@ class HotpotQATask(Task):
                 ground_truths = [str(raw_ground_truth)]
 
         reward = compute_score(response, ground_truths)
+        context_manager_result = agent_result.output.get("context_manager_result")
+        if isinstance(context_manager_result, ContextManagerResult):
+            context_manager_result.set_reward(reward)
+
         return TaskResult(
             reward=reward,
             accuracy=reward,

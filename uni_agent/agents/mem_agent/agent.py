@@ -1,21 +1,29 @@
-"""MemAgent with its context-management policy kept inside the Agent."""
+"""Self-contained MemAgent implementation with explicit context management."""
 
 from __future__ import annotations
 
 import copy
+import logging
 import time
+import uuid
+from contextlib import asynccontextmanager
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from uni_agent.agents.react.model import OpenAICompatibleChatModel
 from uni_agent.agents.registry import register_agent
+from uni_agent.tools import Toolbox
 
 from ..base import Agent, AgentConfig, AgentResult
 
 if TYPE_CHECKING:
     from uni_agent.sandbox import Sandbox
+
+logger = logging.getLogger(__name__)
+
+_FINISH_TOOLS = {"finish", "submit"}
 
 TEMPLATE = (
     "You are presented with a problem, a section of an article that may contain the answer to the problem, and a "
@@ -37,10 +45,75 @@ TEMPLATE_FINAL_BOXED = (
 )
 
 
+class ContextTurnOutput(BaseModel):
+    """One model turn inside a MemAgent context segment."""
+
+    step_idx: int
+    response: str = ""
+    tool_results: list[dict[str, Any]] = Field(default_factory=list)
+    done: bool = False
+    exit_reason: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+
+class ContextStepOutput(BaseModel):
+    """One independently materialized MemAgent context segment."""
+
+    prompt_messages: list[dict[str, Any]] = Field(default_factory=list)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    steps: list[ContextTurnOutput] = Field(default_factory=list)
+    reward: float = 0.0
+    execution_time: float = 0.0
+
+    def set_prompt_messages(self, messages: list[dict[str, Any]]) -> None:
+        self.prompt_messages = copy.deepcopy(messages)
+
+    def set_messages(self, messages: list[dict[str, Any]]) -> None:
+        self.messages = copy.deepcopy(messages)
+
+    def set_execution_time(self, execution_time: float) -> None:
+        self.execution_time = execution_time
+
+    def add_step(self, step_output: ContextTurnOutput) -> None:
+        self.steps.append(step_output)
+
+    def set_reward(self, reward: float) -> None:
+        self.reward = reward
+
+    def get_reward(self) -> float:
+        return self.reward
+
+
+class ContextManagerResult(BaseModel):
+    """Aggregate result of a context-managed MemAgent execution."""
+
+    run_id: str
+    execution_time: float = 0.0
+    trajectory: list[ContextStepOutput] = Field(default_factory=list)
+    final_state: ContextStepOutput = Field(default_factory=ContextStepOutput)
+    total_steps: int = 0
+
+    def set_reward(self, reward: float) -> None:
+        """Assign the final task reward to every context segment."""
+
+        for step in self.trajectory:
+            step.set_reward(reward)
+
+
 class MemAgentConfig(AgentConfig):
     """Configuration for chunked-context memory updates."""
 
     name: str = "mem_agent"
+    tools: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Host-side tools available to every context step.",
+    )
+    max_steps: int = Field(default=50, gt=0, description="Maximum model calls across all context segments.")
+    action_timeout: float | None = Field(
+        default=None,
+        description="Per-tool-call timeout; None defers to the tool's own timeout.",
+    )
     tokenizer_path: str | None = Field(
         default=None,
         description="Tokenizer path used to split the long context into token chunks.",
@@ -49,7 +122,6 @@ class MemAgentConfig(AgentConfig):
     max_memorization_length: int = Field(default=1024, gt=0)
     max_chunks: int = Field(default=8, gt=0)
     max_final_response_length: int = Field(default=1024, gt=0)
-    max_steps: int = Field(default=9, gt=0, description="Maximum model calls, including the final answer call.")
 
 
 @lru_cache(maxsize=4)
@@ -76,6 +148,214 @@ class MemAgent(Agent):
 
     config_model = MemAgentConfig
 
+    def __init__(self, config: MemAgentConfig | None = None) -> None:
+        super().__init__(config)
+        self._model: OpenAICompatibleChatModel | None = None
+        self._toolbox: Toolbox | None = None
+        self._trajectory: list[ContextStepOutput] = []
+        self._current_context_step: ContextStepOutput | None = None
+        self._global_step_idx = 0
+        self._step_idx = 0
+        self._total_completion_tokens = 0
+        self._interaction_start = 0.0
+        self._context_session_active = False
+        self._context_manager_result: ContextManagerResult | None = None
+        self.messages: list[dict[str, Any]] = []
+
+    @asynccontextmanager
+    async def context_session(self, *, sandbox: Sandbox) -> AsyncIterator[None]:
+        """Initialize and close the model/tool runtime used by MemAgent."""
+
+        if self._context_session_active:
+            raise RuntimeError("MemAgent does not support nested context_session() calls")
+
+        cfg = self._mem_agent_config
+        if cfg.model.base_url is None:
+            raise ValueError(f"{cfg.name}: config.model.base_url is not set (the endpoint the policy calls)")
+
+        self._trajectory = []
+        self._current_context_step = None
+        self._global_step_idx = 0
+        self._step_idx = 0
+        self._total_completion_tokens = 0
+        self._context_manager_result = None
+        self.messages = []
+
+        self._toolbox = Toolbox.from_specs(cfg.tools, sandbox=sandbox)
+        self._model = OpenAICompatibleChatModel(
+            base_url=cfg.model.base_url,
+            api_key=cfg.model.api_key,
+            model_name=cfg.model.model_name,
+            sampling_params=self._default_sampling_params(),
+            tools_schemas=self._toolbox.schemas(),
+        )
+
+        started_at = time.perf_counter()
+        self._context_session_active = True
+        try:
+            async with self._toolbox.entered(retry=3, timeout=60):
+                yield
+        finally:
+            self._collect_context_step()
+            try:
+                await self._model.aclose()
+            finally:
+                self._context_session_active = False
+                self._context_manager_result = ContextManagerResult(
+                    run_id=str(uuid.uuid4()),
+                    execution_time=time.perf_counter() - started_at,
+                    trajectory=self._trajectory,
+                    final_state=self._trajectory[-1] if self._trajectory else ContextStepOutput(),
+                    total_steps=self._global_step_idx,
+                )
+
+    def build_agent_result(self) -> AgentResult:
+        """Convert the completed MemAgent context session into an Agent result."""
+
+        if self._context_session_active:
+            raise RuntimeError("build_agent_result() must be called after context_session() exits")
+        if self._context_manager_result is None:
+            raise RuntimeError("No completed context session; call context_session() from run() first")
+
+        result = self._context_manager_result
+        final_response = result.final_state.steps[-1].response if result.final_state.steps else ""
+        transcript = [message for segment in result.trajectory for message in segment.messages]
+        return AgentResult(
+            output={"response": final_response, "context_manager_result": result},
+            transcript=transcript,
+            info={
+                "execution_time": result.execution_time,
+                "total_steps": result.total_steps,
+                "num_contexts": len(result.trajectory),
+            },
+        )
+
+    async def update_context(self, messages: list[dict[str, Any]]) -> None:
+        """Finalize the current segment and continue from a newly built context."""
+
+        if not self._context_session_active:
+            raise RuntimeError("update_context() must be called inside context_session()")
+        self._collect_context_step()
+        self._track_context_step()
+        assert self._current_context_step is not None
+        self._current_context_step.set_prompt_messages(messages)
+        self.messages = copy.deepcopy(messages)
+        for message in self.messages:
+            logger.info("%s PROMPT:\n%s", str(message.get("role", "")).upper(), message.get("content", ""))
+
+    async def step(self, sampling_params: dict[str, Any] | None = None) -> ContextTurnOutput:
+        """Run one model call, optionally dispatching returned tool calls."""
+
+        if self._current_context_step is None:
+            raise RuntimeError("Please call update_context() before calling the first step()")
+        if self._model is None or self._toolbox is None:
+            raise RuntimeError("MemAgent runtime is not initialized; call run() through a Task")
+
+        cfg = self._mem_agent_config
+        if self._global_step_idx >= cfg.max_steps:
+            raise RuntimeError(f"MemAgent reached max_steps={cfg.max_steps}")
+
+        self._global_step_idx += 1
+        self._step_idx += 1
+        params = self._sampling_params_for_step(sampling_params)
+        content, tool_calls, generation_info = await self._model.query(
+            self.messages,
+            sampling_params=params,
+        )
+        self._total_completion_tokens += generation_info["completion_tokens"]
+
+        assistant_message: dict[str, Any] = {"role": "assistant", "content": content}
+        if tool_calls:
+            assistant_message["tool_calls"] = tool_calls
+        self.messages.append(assistant_message)
+
+        output = ContextTurnOutput(
+            step_idx=self._step_idx,
+            response=content,
+            prompt_tokens=generation_info["prompt_tokens"],
+            completion_tokens=generation_info["completion_tokens"],
+        )
+
+        saw_finish = False
+        for tool_call in tool_calls:
+            function = tool_call.get("function", {})
+            name = str(function.get("name", ""))
+            result = await self._toolbox.call(
+                name,
+                function.get("arguments"),
+                timeout=cfg.action_timeout,
+            )
+            output.tool_results.append({"name": name, "status": result.status, "text": result.text})
+            self.messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.get("id"),
+                    "name": name,
+                    "content": result.to_observation(),
+                }
+            )
+            saw_finish = saw_finish or name in _FINISH_TOOLS
+
+        output.done = not tool_calls or saw_finish
+        output.exit_reason = "finished" if output.done else "completed"
+        self._current_context_step.add_step(output)
+        return output
+
+    def get_global_step_idx(self) -> int:
+        """Return the number of model calls across all context segments."""
+
+        return self._global_step_idx
+
+    def get_current_step_idx(self) -> int:
+        """Return the number of model calls in the current context segment."""
+
+        return self._step_idx
+
+    def get_current_context_step(self) -> ContextStepOutput:
+        """Return the segment currently being constructed."""
+
+        if self._current_context_step is None:
+            raise RuntimeError("No context is active; call update_context() first")
+        return self._current_context_step
+
+    @property
+    def _mem_agent_config(self) -> MemAgentConfig:
+        config = self.config
+        if not isinstance(config, MemAgentConfig):
+            raise TypeError("MemAgent requires MemAgentConfig")
+        return config
+
+    def _track_context_step(self) -> None:
+        self._current_context_step = ContextStepOutput()
+        self._step_idx = 0
+        self._interaction_start = time.perf_counter()
+
+    def _collect_context_step(self) -> None:
+        if self._current_context_step is None or not self._current_context_step.steps:
+            return
+        self._current_context_step.set_messages(self.messages)
+        self._current_context_step.set_execution_time(time.perf_counter() - self._interaction_start)
+        self._trajectory.append(self._current_context_step)
+        self._current_context_step = None
+
+    def _default_sampling_params(self) -> dict[str, Any]:
+        return self._mem_agent_config.model.sampling_params()
+
+    def _sampling_params_for_step(self, overrides: dict[str, Any] | None) -> dict[str, Any]:
+        cfg = self._mem_agent_config
+        params = self._default_sampling_params()
+        params.update(overrides or {})
+
+        max_tokens = params.get("max_tokens", cfg.model.max_tokens_per_turn)
+        if cfg.model.max_total_tokens is not None:
+            remaining = cfg.model.max_total_tokens - self._total_completion_tokens
+            if remaining <= 0:
+                raise RuntimeError(f"MemAgent reached max_total_tokens={cfg.model.max_total_tokens}")
+            max_tokens = min(max_tokens, remaining) if max_tokens is not None else remaining
+        if max_tokens is not None:
+            params["max_tokens"] = max_tokens
+        return params
+
     async def run(
         self,
         *,
@@ -83,9 +363,8 @@ class MemAgent(Agent):
         messages: list[dict[str, Any]],
         raw_data: dict[str, Any] | None = None,
     ) -> AgentResult:
-        """Run the MemAgent-specific context-management policy."""
+        """Run the MemAgent policy using explicit context-management calls."""
 
-        del sandbox  # MemAgent does not require a sandbox-bound tool runtime.
         context_input = dict(raw_data or {})
         context_input.setdefault("prompt", messages)
 
@@ -93,58 +372,14 @@ class MemAgent(Agent):
         tokenizer_path = cfg.tokenizer_path or cfg.model.model_name
         if not tokenizer_path:
             raise ValueError("mem_agent requires agent.tokenizer_path or agent.model.model_name")
-        if cfg.model.base_url is None:
-            raise ValueError("mem_agent: config.model.base_url is not set (the endpoint the policy calls)")
-
         tokenizer = _load_tokenizer(tokenizer_path)
         prompt, chunks = process(context_input, tokenizer, cfg.chunk_size)
-        model = OpenAICompatibleChatModel(
-            base_url=cfg.model.base_url,
-            api_key=cfg.model.api_key,
-            model_name=cfg.model.model_name,
-            sampling_params=cfg.model.sampling_params(),
-        )
 
-        started_at = time.perf_counter()
-        transcript: list[dict[str, Any]] = []
-        total_steps = 0
-        total_completion_tokens = 0
-
-        async def run_context(context_messages: list[dict[str, Any]], max_tokens: int) -> str:
-            """Generate once from a newly constructed MemAgent context."""
-
-            nonlocal total_steps, total_completion_tokens
-            if total_steps >= cfg.max_steps:
-                raise RuntimeError(f"MemAgent reached max_steps={cfg.max_steps}")
-
-            sampling_params: dict[str, Any] = cfg.model.sampling_params()
-            if cfg.model.max_tokens_per_turn is not None:
-                max_tokens = min(max_tokens, cfg.model.max_tokens_per_turn)
-            if cfg.model.max_total_tokens is not None:
-                remaining = cfg.model.max_total_tokens - total_completion_tokens
-                if remaining <= 0:
-                    raise RuntimeError(f"MemAgent reached max_total_tokens={cfg.model.max_total_tokens}")
-                max_tokens = min(max_tokens, remaining)
-            sampling_params["max_tokens"] = max_tokens
-
-            response, tool_calls, generation_info = await model.query(
-                context_messages,
-                sampling_params=sampling_params,
-            )
-            if tool_calls:
-                raise RuntimeError("MemAgent does not support tool calls")
-
-            total_steps += 1
-            total_completion_tokens += int(generation_info["completion_tokens"])
-            transcript.extend(copy.deepcopy(context_messages))
-            transcript.append({"role": "assistant", "content": response})
-            return response
-
-        try:
+        async with self.context_session(sandbox=sandbox):
             memory: str | None = None
-            # Reserve one model call for the final answer.
-            max_memory_steps = min(cfg.max_chunks, cfg.max_steps - 1)
-            for chunk in chunks[:max_memory_steps]:
+            for chunk in chunks:
+                if self.get_global_step_idx() >= cfg.max_chunks:
+                    break
                 conversation = [
                     {
                         "role": "user",
@@ -155,9 +390,11 @@ class MemAgent(Agent):
                         ),
                     }
                 ]
-                memory = await run_context(conversation, cfg.max_memorization_length)
+                await self.update_context(conversation)
+                step_output = await self.step(sampling_params={"max_tokens": cfg.max_memorization_length})
+                memory = step_output.response
 
-            final_conversation = [
+            conversation = [
                 {
                     "role": "user",
                     "content": TEMPLATE_FINAL_BOXED.format(
@@ -166,16 +403,7 @@ class MemAgent(Agent):
                     ),
                 }
             ]
-            final_response = await run_context(final_conversation, cfg.max_final_response_length)
-        finally:
-            await model.aclose()
+            await self.update_context(conversation)
+            await self.step(sampling_params={"max_tokens": cfg.max_final_response_length})
 
-        return AgentResult(
-            output={"response": final_response},
-            transcript=transcript,
-            info={
-                "execution_time": time.perf_counter() - started_at,
-                "total_steps": total_steps,
-                "num_contexts": total_steps,
-            },
-        )
+        return self.build_agent_result()

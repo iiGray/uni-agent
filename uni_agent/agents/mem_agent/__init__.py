@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from .agent import MemAgent, MemAgentConfig
+from .agent import ContextManagerResult, MemAgent, MemAgentConfig
 
-__all__ = ["MemAgent", "MemAgentConfig"]
+__all__ = ["ContextManagerResult", "MemAgent", "MemAgentConfig"]

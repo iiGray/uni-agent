@@ -7,7 +7,7 @@ and answers the original question from the final memory.
 The implementation is split by responsibility:
 
 - `uni_agent/agents/mem_agent/` contains the MemAgent policy and its
-  context-management logic.
+  context-management methods.
 - `uni_agent/tasks/hotpotqa/` contains the HotpotQA task and final-answer reward.
 - `examples/mem_agent/dataset.py` adapts long-context dataset rows to the normal
   Uni-Agent task-runner payload.
@@ -31,23 +31,20 @@ not need MemAgent-specific fields.
 
 ## Context Management
 
-`MemAgent` implements its context-management policy directly in `run()`:
+`MemAgent` implements the context-management methods directly:
 
 ```python
 class MemAgent(Agent):
     async def run(self, *, sandbox, messages):
-        for chunk in chunks:
-            context = build_memory_prompt(chunk, memory)
-            memory = await run_context(context)
-
-        final_context = build_answer_prompt(memory)
-        return await run_context(final_context)
+        async with self.context_session(sandbox=sandbox):
+            await self.update_context(...)
+            memory = (await self.step()).response
+        return self.build_agent_result()
 ```
 
-Every model call uses a newly constructed message list, so the Gateway records
-it as a new trajectory chain. The Task scores the final boxed answer and posts
-the session-level reward; the framework assigns that reward to every context
-segment emitted by the session.
+Every `update_context()` starts a new Gateway trajectory chain. The Task scores
+the final boxed answer and posts the session-level reward; the framework assigns
+that reward to every context segment emitted by the session.
 
 ## Training
 
