@@ -5,7 +5,7 @@ This section introduces each abstraction together with the interface used to cus
 
 ![Uni-Agent architecture overview](../assets/uni-agent.png){ width="800" }
 
-A `Task` defines what should happen and how success is measured; an `Agent` decides how to solve it; a `ContextManager` optionally controls trajectory boundaries; a `Toolbox` exposes actions; and a `Sandbox` provides the execution environment.
+A `Task` defines what should happen and how success is measured; an `Agent` decides how to solve it; a `Toolbox` exposes actions; and a `Sandbox` provides the execution environment.
 
 ## Execution Lifecycle
 
@@ -21,7 +21,6 @@ A normal episode runs from the top down:
 Task
 ├── Sandbox
 ├── Agent
-│   ├── ContextManager (Optional)
 │   └── Tool and Toolbox (Optional)
 └── Reward / Verification
 ```
@@ -33,7 +32,6 @@ When inference or training uses the verl-managed rollout path, the Uni-Agent Gat
 - **Gateway** owns session-scoped model routing and token-level trajectory capture for the training pipeline.
 - **Task** owns the Task execution lifecycle, task metadata, prompt, and reward computation.
 - **Agent** owns the solving strategy. A white-box agent owns its loop; a black-box agent delegates the loop to an external agent harness, such as Claude Code.
-- **ContextManager** is an optional Agent mixin that owns explicit context switches and records each context segment.
 - **Tool** owns one model-visible action and any host-side state required by that action. **Toolbox** owns a set of tool instances bound to one sandbox.
 - **Sandbox** owns the execution environment, filesystem, and command data plane.
 
@@ -106,6 +104,5 @@ The overview is top-down, but customization is easier in dependency order:
 1. [Sandbox](sandbox.md) — add an execution backend.
 2. [Tool and Toolbox](tool-and-toolbox.md) — expose new actions.
 3. [Agent](agent.md) — implement a white-box loop or integrate a black-box harness.
-4. [Context Management](context-management.md) — compose explicit context switching into an Agent.
-5. [Task and Reward](task-and-reward.md) — compose the lower layers into a scored workload.
-6. [Gateway and Trajectories](gateway-and-trajectories.md) — understand the training rollout path.
+4. [Task and Reward](task-and-reward.md) — compose the lower layers into a scored workload.
+5. [Gateway and Trajectories](gateway-and-trajectories.md) — understand the training rollout path.

@@ -5,7 +5,6 @@ from typing import Any
 import pytest
 
 import uni_agent.agents.mem_agent.agent as mem_agent_module
-import uni_agent.context_management.context_manager as context_manager_module
 from examples.mem_agent.dataset import build_task_config, context_to_text
 from uni_agent.agents import AgentResult
 from uni_agent.agents.mem_agent import MemAgent, MemAgentConfig
@@ -24,16 +23,21 @@ class _FakeTokenizer:
 
 
 class _FakeModel:
+    instances: list[_FakeModel] = []
+
     def __init__(self, **_: Any) -> None:
         self.calls: list[list[dict[str, Any]]] = []
+        self.sampling_params: list[dict[str, Any]] = []
+        self.closed = False
+        type(self).instances.append(self)
 
     async def query(self, messages, *, sampling_params):
-        del sampling_params
         self.calls.append(messages)
+        self.sampling_params.append(sampling_params)
         return f"memory-{len(self.calls)}", [], {"prompt_tokens": 3, "completion_tokens": 2}
 
     async def aclose(self) -> None:
-        pass
+        self.closed = True
 
 
 class _FakeSandbox:
@@ -54,7 +58,8 @@ class _FakeAgent:
 
 @pytest.mark.asyncio
 async def test_mem_agent_uses_each_chunk_as_a_new_context(monkeypatch):
-    monkeypatch.setattr(context_manager_module, "OpenAICompatibleChatModel", _FakeModel)
+    _FakeModel.instances.clear()
+    monkeypatch.setattr(mem_agent_module, "OpenAICompatibleChatModel", _FakeModel)
     monkeypatch.setattr(mem_agent_module, "_load_tokenizer", lambda _: _FakeTokenizer())
     agent = MemAgent(
         MemAgentConfig(
@@ -62,6 +67,8 @@ async def test_mem_agent_uses_each_chunk_as_a_new_context(monkeypatch):
             chunk_size=2,
             max_chunks=2,
             max_steps=3,
+            max_memorization_length=11,
+            max_final_response_length=7,
             model={"base_url": "http://gateway.invalid/v1", "model_name": "policy"},
         )
     )
@@ -75,10 +82,11 @@ async def test_mem_agent_uses_each_chunk_as_a_new_context(monkeypatch):
         },
     )
 
-    context_result = result.output["context_manager_result"]
-    assert len(context_result.trajectory) == 3
-    assert "memory-1" in context_result.trajectory[1].prompt_messages[0]["content"]
     assert result.output["response"] == "memory-3"
+    assert result.info["num_contexts"] == 3
+    assert "memory-1" in _FakeModel.instances[0].calls[1][0]["content"]
+    assert [params["max_tokens"] for params in _FakeModel.instances[0].sampling_params] == [11, 11, 7]
+    assert _FakeModel.instances[0].closed
 
 
 def test_mem_agent_reward_scores_last_boxed_answer():

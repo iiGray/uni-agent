@@ -1,4 +1,4 @@
-"""MemAgent example built by composing Agent with ContextManager."""
+"""Self-contained MemAgent implementation."""
 
 from __future__ import annotations
 
