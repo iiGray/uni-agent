@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 import uni_agent.agents.mem_agent.agent as mem_agent_module
 from examples.mem_agent.dataset import build_task_config, context_to_text
@@ -54,6 +55,12 @@ class _FakeAgent:
 def test_context_management_methods_are_defined_on_mem_agent():
     assert "update_context" in MemAgent.__dict__
     assert "step" in MemAgent.__dict__
+
+
+def test_mem_agent_config_does_not_accept_tools():
+    assert "tools" not in MemAgentConfig.model_fields
+    with pytest.raises(ValidationError):
+        MemAgentConfig(tools=[])
 
 
 @pytest.mark.asyncio
