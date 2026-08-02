@@ -11,7 +11,6 @@ cd "${REPO_ROOT}"
 : "${TRAIN_FILE:?Set TRAIN_FILE to the training Parquet file}"
 : "${VAL_FILE:?Set VAL_FILE to the validation Parquet file}"
 
-TOKENIZER_PATH="${TOKENIZER_PATH:-${MODEL_PATH}}"
 TASK_CONFIG="${TASK_CONFIG:-examples/quickstart/training/task_config_hotpotqa.yaml}"
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-$(basename "${MODEL_PATH}")}"
 
@@ -40,6 +39,7 @@ fi
 
 MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-8192}"
 MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-2048}"
+CONTEXT_CHUNK_SIZE="${CONTEXT_CHUNK_SIZE:-5000}"
 MAX_MODEL_LEN=$((MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))
 PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-32768}"
 
@@ -71,6 +71,7 @@ ray job submit --no-wait \
     data.train_batch_size="${TRAIN_BATCH_SIZE}" \
     data.custom_cls.path=pkg://examples.mem_agent.dataset \
     data.custom_cls.name=MemAgentDataset \
+    ++data.context_chunk_size="${CONTEXT_CHUNK_SIZE}" \
     algorithm.adv_estimator=grpo \
     algorithm.use_kl_in_reward=False \
     algorithm.rollout_correction.bypass_mode=False \
@@ -118,7 +119,6 @@ ray job submit --no-wait \
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.trajectory_selection=all \
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.task_config_path="${TASK_CONFIG}" \
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.model_name="${SERVED_MODEL_NAME}" \
-    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.tokenizer_path="${TOKENIZER_PATH}" \
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.report_reward=True \
     ++actor_rollout_ref.rollout.custom.agent_framework.use_reward_loop_worker=False \
     ++actor_rollout_ref.rollout.custom.agent_framework.mask_unfinished_episode=False \

@@ -3,8 +3,6 @@
     provider: local
   agent:
     name: mem_agent
-    tokenizer_path: null
-    chunk_size: 5000
     max_memorization_length: 1024
     max_chunks: 8
     max_final_response_length: 1024

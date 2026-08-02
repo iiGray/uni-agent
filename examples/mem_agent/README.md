@@ -9,8 +9,9 @@ The implementation is split by responsibility:
 - `uni_agent/agents/mem_agent/` contains the MemAgent policy and its
   context-management methods.
 - `uni_agent/tasks/hotpotqa/` contains the HotpotQA task and final-answer reward.
-- `examples/mem_agent/dataset.py` adapts long-context dataset rows to the normal
-  Uni-Agent task-runner payload.
+- `examples/mem_agent/dataset.py` uses the Dataset-owned tokenizer to split long
+  context into token-bounded text chunks before building the normal Uni-Agent
+  task-runner payload.
 - `examples/quickstart/training/task_config_hotpotqa.yaml` contains the
   HotpotQA task and MemAgent context-management defaults.
 - `examples/quickstart/training/train_mem_agent.sh` is the canonical verl v1
@@ -25,9 +26,10 @@ The Parquet rows must contain:
 - `reward_model.ground_truth` (or `ground_truth`): one answer or a list of
   accepted answers.
 
-`MemAgentDataset` moves the context and answer into
-`tools_kwargs.task.metadata`, so the generic agent framework and task runner do
-not need MemAgent-specific fields.
+`MemAgentDataset` tokenizes the context, decodes each token-bounded chunk back
+to text, and puts `chunks` plus the answer into `tools_kwargs.task.metadata`.
+The original long context is removed from the returned row, so neither the
+generic task runner nor the Agent needs a tokenizer path or model files.
 
 ## Context Management
 
@@ -36,7 +38,7 @@ not need MemAgent-specific fields.
 ```python
 class MemAgent(Agent):
     async def run(self, *, sandbox, messages):
-        async with self.context_session(sandbox=sandbox):
+        async with self.context_session():
             await self.update_context(...)
             memory = (await self.step()).response
         return self.build_agent_result()
@@ -59,4 +61,5 @@ bash examples/quickstart/training/train_mem_agent.sh
 
 The recipe uses `verl.trainer.main_ppo` with the v1 `separate_async` topology.
 Trainer and rollout GPU counts are configurable through environment variables
-in the script.
+in the script. Set `CONTEXT_CHUNK_SIZE` to change the Dataset-side token chunk
+size from its default of 5000.

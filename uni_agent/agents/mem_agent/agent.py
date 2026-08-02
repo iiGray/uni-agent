@@ -7,7 +7,6 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
-from functools import lru_cache
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from pydantic import BaseModel, Field
@@ -100,32 +99,9 @@ class MemAgentConfig(AgentConfig):
 
     name: str = "mem_agent"
     max_steps: int = Field(default=50, gt=0, description="Maximum model calls across all context segments.")
-    tokenizer_path: str | None = Field(
-        default=None,
-        description="Tokenizer path used to split the long context into token chunks.",
-    )
-    chunk_size: int = Field(default=5000, gt=0)
     max_memorization_length: int = Field(default=1024, gt=0)
     max_chunks: int = Field(default=8, gt=0)
     max_final_response_length: int = Field(default=1024, gt=0)
-
-
-@lru_cache(maxsize=4)
-def _load_tokenizer(tokenizer_path: str):
-    from transformers import AutoTokenizer
-
-    return AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
-
-
-def process(item: dict[str, Any], tokenizer, chunk_size: int) -> tuple[str, list[str]]:
-    """Split one long-context sample without changing the original prompt format."""
-
-    question = item["prompt"][0]["content"]
-    context = item["context"]
-    context_ids = tokenizer.encode(context, add_special_tokens=False)
-    tokenized_chunks = [context_ids[i : i + chunk_size] for i in range(0, len(context_ids), chunk_size)]
-    chunks = [tokenizer.decode(chunk, skip_special_tokens=True) for chunk in tokenized_chunks]
-    return question, chunks
 
 
 @register_agent("mem_agent")
@@ -326,11 +302,13 @@ class MemAgent(Agent):
         context_input.setdefault("prompt", messages)
 
         cfg: MemAgentConfig = self.config  # type: ignore[assignment]
-        tokenizer_path = cfg.tokenizer_path or cfg.model.model_name
-        if not tokenizer_path:
-            raise ValueError("mem_agent requires agent.tokenizer_path or agent.model.model_name")
-        tokenizer = _load_tokenizer(tokenizer_path)
-        prompt, chunks = process(context_input, tokenizer, cfg.chunk_size)
+        prompt_messages = context_input.get("prompt")
+        if not isinstance(prompt_messages, list) or not prompt_messages:
+            raise ValueError("mem_agent requires a non-empty prompt message list")
+        prompt = str(prompt_messages[0].get("content", ""))
+        chunks = context_input.get("chunks")
+        if not isinstance(chunks, list) or not all(isinstance(chunk, str) for chunk in chunks):
+            raise ValueError("mem_agent requires pre-split text chunks in raw_data['chunks']")
 
         async with self.context_session():
             memory: str | None = None

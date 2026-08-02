@@ -23,7 +23,6 @@ async def run_task(
     task_config_path: str | None = None,
     api_key: str = "EMPTY",
     model_name: str | None = None,
-    tokenizer_path: str | None = None,
     report_reward: bool = False,
     **_: Any,
 ) -> TaskResult:
@@ -52,8 +51,6 @@ async def run_task(
             "model_name": model_name,
         },
     )
-    if tokenizer_path is not None:
-        task.setdefault("agent", {})["tokenizer_path"] = tokenizer_path
     if raw_prompt is not None and not task.get("prompt"):
         task["prompt"] = raw_prompt
 

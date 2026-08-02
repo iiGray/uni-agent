@@ -6,11 +6,17 @@ import pytest
 from pydantic import ValidationError
 
 import uni_agent.agents.mem_agent.agent as mem_agent_module
-from examples.mem_agent.dataset import build_task_config, context_to_text
+from examples.mem_agent.dataset import (
+    MemAgentDataset,
+    build_task_config,
+    context_to_text,
+    split_context_into_token_chunks,
+)
 from uni_agent.agents import AgentResult
 from uni_agent.agents.mem_agent import MemAgent, MemAgentConfig
 from uni_agent.tasks.hotpotqa import HotpotQATask, HotpotQATaskConfig
 from uni_agent.tasks.hotpotqa.reward import compute_score, last_boxed_only_string, remove_boxed
+from verl.utils.dataset.rl_dataset import RLHFDataset
 
 
 class _FakeTokenizer:
@@ -63,14 +69,18 @@ def test_mem_agent_config_does_not_accept_tools():
         MemAgentConfig(tools=[])
 
 
+def test_mem_agent_config_does_not_accept_tokenizer_or_chunk_size():
+    assert "tokenizer_path" not in MemAgentConfig.model_fields
+    assert "chunk_size" not in MemAgentConfig.model_fields
+    with pytest.raises(ValidationError):
+        MemAgentConfig(tokenizer_path="model", chunk_size=2)
+
+
 @pytest.mark.asyncio
 async def test_mem_agent_uses_each_chunk_as_a_new_context(monkeypatch):
     monkeypatch.setattr(mem_agent_module, "OpenAICompatibleChatModel", _FakeModel)
-    monkeypatch.setattr(mem_agent_module, "_load_tokenizer", lambda _: _FakeTokenizer())
     agent = MemAgent(
         MemAgentConfig(
-            tokenizer_path="fake-tokenizer",
-            chunk_size=2,
             max_chunks=2,
             max_steps=3,
             model={"base_url": "http://gateway.invalid/v1", "model_name": "policy"},
@@ -82,7 +92,7 @@ async def test_mem_agent_uses_each_chunk_as_a_new_context(monkeypatch):
         messages=[{"role": "user", "content": "question"}],
         raw_data={
             "prompt": [{"role": "user", "content": "question"}],
-            "context": "one two three four",
+            "chunks": ["one two", "three four"],
         },
     )
 
@@ -113,18 +123,41 @@ def test_mem_agent_dataset_builds_standard_task_payload():
     row = {
         "context": [["Title", ["alpha", "beta"]]],
         "reward_model": {"ground_truth": ["answer"]},
+        "tools_kwargs": {"task": {"metadata": {"context": "stale raw context"}}},
     }
 
-    task = build_task_config(row)
+    task = build_task_config(row, tokenizer=_FakeTokenizer(), chunk_size=2)
 
     assert context_to_text(row["context"]) == "Title\nalpha\nbeta"
+    assert split_context_into_token_chunks(row["context"], tokenizer=_FakeTokenizer(), chunk_size=2) == [
+        "Title alpha",
+        "beta",
+    ]
     assert task == {
         "name": "hotpotqa",
         "metadata": {
-            "context": "Title\nalpha\nbeta",
+            "chunks": ["Title alpha", "beta"],
             "reward_model": {"ground_truth": ["answer"]},
         },
     }
+
+
+def test_mem_agent_dataset_returns_chunks_without_raw_context(monkeypatch):
+    row = {
+        "context": "one two three four",
+        "extra_info": {"context": "duplicate context"},
+        "reward_model": {"ground_truth": ["answer"]},
+    }
+    monkeypatch.setattr(RLHFDataset, "__getitem__", lambda _self, _item: dict(row))
+    dataset = object.__new__(MemAgentDataset)
+    dataset.tokenizer = _FakeTokenizer()
+    dataset.config = {"context_chunk_size": 2}
+
+    result = dataset[0]
+
+    assert result["tools_kwargs"]["task"]["metadata"]["chunks"] == ["one two", "three four"]
+    assert "context" not in result
+    assert "context" not in result["extra_info"]
 
 
 @pytest.mark.asyncio
@@ -133,7 +166,7 @@ async def test_hotpotqa_task_scores_final_response(monkeypatch):
         HotpotQATaskConfig(
             prompt=[{"role": "user", "content": "question"}],
             metadata={
-                "context": "long context",
+                "chunks": ["long context"],
                 "reward_model": {"ground_truth": ["alpha beta"]},
             },
             sandbox={"provider": "local"},
