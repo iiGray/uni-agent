@@ -29,8 +29,8 @@ async def run_task(
     """Resolve the sample's task, run it against ``session``, and return its result.
 
     Satisfies the framework's ``AgentRunner`` contract (``session`` / ``raw_prompt``
-    / ``sample_index`` / ``tools_kwargs``). When the resolved task config does not
-    provide a prompt, ``raw_prompt`` supplies the sample's prompt.
+    / ``sample_index`` / ``tools_kwargs``). ``raw_prompt`` is accepted for protocol
+    parity but unused: a uni_agent task carries its own prompt on the task config.
 
     Run-level defaults come from the per-task-name YAML file selected by
     ``task_config_path``. ``TaskConfigResolver`` applies that Task Config, the
@@ -51,8 +51,6 @@ async def run_task(
             "model_name": model_name,
         },
     )
-    if raw_prompt is not None and not task.get("prompt"):
-        task["prompt"] = raw_prompt
 
     task_name = task.get("name")
     logger.info("run_task start: task=%s sample_index=%s", task_name, sample_index)

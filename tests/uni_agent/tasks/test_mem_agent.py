@@ -121,6 +121,7 @@ def test_boxed_helpers_preserve_nested_braces():
 
 def test_mem_agent_dataset_builds_standard_task_payload():
     row = {
+        "raw_prompt": [{"role": "user", "content": "question"}],
         "context": [["Title", ["alpha", "beta"]]],
         "reward_model": {"ground_truth": ["answer"]},
         "tools_kwargs": {"task": {"metadata": {"context": "stale raw context"}}},
@@ -135,6 +136,7 @@ def test_mem_agent_dataset_builds_standard_task_payload():
     ]
     assert task == {
         "name": "hotpotqa",
+        "prompt": [{"role": "user", "content": "question"}],
         "metadata": {
             "chunks": ["Title alpha", "beta"],
             "reward_model": {"ground_truth": ["answer"]},
@@ -144,6 +146,7 @@ def test_mem_agent_dataset_builds_standard_task_payload():
 
 def test_mem_agent_dataset_returns_chunks_without_raw_context(monkeypatch):
     row = {
+        "raw_prompt": [{"role": "user", "content": "question"}],
         "context": "one two three four",
         "extra_info": {"context": "duplicate context"},
         "reward_model": {"ground_truth": ["answer"]},
@@ -156,6 +159,7 @@ def test_mem_agent_dataset_returns_chunks_without_raw_context(monkeypatch):
     result = dataset[0]
 
     assert result["tools_kwargs"]["task"]["metadata"]["chunks"] == ["one two", "three four"]
+    assert result["tools_kwargs"]["task"]["prompt"] == [{"role": "user", "content": "question"}]
     assert "context" not in result
     assert "context" not in result["extra_info"]
 

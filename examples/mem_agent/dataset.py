@@ -44,6 +44,8 @@ def build_task_config(row: dict[str, Any], *, tokenizer, chunk_size: int) -> dic
     existing_task = existing_tools_kwargs.get("task")
     task = dict(existing_task) if isinstance(existing_task, dict) else {}
     task.setdefault("name", "hotpotqa")
+    if row.get("raw_prompt") is not None and not task.get("prompt"):
+        task["prompt"] = row["raw_prompt"]
 
     metadata = dict(task.get("metadata") or {})
     metadata.pop("context", None)
