@@ -125,10 +125,6 @@ class AgentFrameworkRolloutAdapter:
                 "disable teacher policy/distillation or use an AgentLoopManager that supports it."
             )
 
-        af_cfg = OmegaConf.select(config, "actor_rollout_ref.rollout.custom.agent_framework", default={}) or {}
-        if not af_cfg.get("use_reward_loop_worker", True):
-            reward_loop_worker_handles = None
-
         gateway_manager = build_gateway_manager(config=config, llm_client=llm_client)
         framework_worker = AgentFrameworkWorker.remote(
             config=config,

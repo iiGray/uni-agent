@@ -29,8 +29,8 @@ async def run_task(
     """Resolve the sample's task, run it against ``session``, and return its result.
 
     Satisfies the framework's ``AgentRunner`` contract (``session`` / ``raw_prompt``
-    / ``sample_index`` / ``tools_kwargs``). ``raw_prompt`` is accepted for protocol
-    parity but unused: a uni_agent task carries its own prompt on the task config.
+    / ``sample_index`` / ``tools_kwargs``). When the resolved task config does not
+    provide a prompt, ``raw_prompt`` supplies the sample's prompt.
 
     Run-level defaults come from the per-task-name YAML file selected by
     ``task_config_path``. ``TaskConfigResolver`` applies that Task Config, the
