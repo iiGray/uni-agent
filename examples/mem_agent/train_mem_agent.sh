@@ -4,14 +4,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 cd "${REPO_ROOT}"
 
 : "${MODEL_PATH:?Set MODEL_PATH to the policy checkpoint}"
 : "${TRAIN_FILE:?Set TRAIN_FILE to the training Parquet file}"
 : "${VAL_FILE:?Set VAL_FILE to the validation Parquet file}"
 
-TASK_CONFIG="${TASK_CONFIG:-examples/quickstart/training/task_config_hotpotqa.yaml}"
+TASK_CONFIG="${TASK_CONFIG:-examples/mem_agent/task_config.yaml}"
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-$(basename "${MODEL_PATH}")}"
 
 PROJECT_NAME="${PROJECT_NAME:-mem_agent}"
@@ -39,7 +39,6 @@ fi
 
 MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-8192}"
 MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-2048}"
-CONTEXT_CHUNK_SIZE="${CONTEXT_CHUNK_SIZE:-5000}"
 MAX_MODEL_LEN=$((MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))
 PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-32768}"
 
@@ -69,9 +68,6 @@ ray job submit --no-wait \
     data.max_prompt_length="${MAX_PROMPT_LENGTH}" \
     data.max_response_length="${MAX_RESPONSE_LENGTH}" \
     data.train_batch_size="${TRAIN_BATCH_SIZE}" \
-    data.custom_cls.path=pkg://examples.mem_agent.dataset \
-    data.custom_cls.name=MemAgentDataset \
-    ++data.context_chunk_size="${CONTEXT_CHUNK_SIZE}" \
     algorithm.adv_estimator=grpo \
     algorithm.use_kl_in_reward=False \
     algorithm.rollout_correction.bypass_mode=False \

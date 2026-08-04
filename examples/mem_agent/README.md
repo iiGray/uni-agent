@@ -8,28 +8,31 @@ The implementation is split by responsibility:
 
 - `uni_agent/agents/mem_agent/` contains the MemAgent policy and its
   context-management methods.
-- `uni_agent/tasks/hotpotqa/` contains the HotpotQA task and final-answer reward.
-- `examples/mem_agent/dataset.py` uses the Dataset-owned tokenizer to split long
-  context into token-bounded text chunks before building the normal Uni-Agent
-  task-runner payload.
-- `examples/quickstart/training/task_config_hotpotqa.yaml` contains the
-  HotpotQA task and MemAgent context-management defaults.
-- `examples/quickstart/training/train_mem_agent.sh` is the canonical verl v1
-  FSDP2 training recipe.
+- `uni_agent/tasks/hotpotqa/` contains the HotpotQA task, final-answer reward,
+  and dataset preprocessing.
+- `examples/mem_agent/task_config.yaml` contains the HotpotQA task and MemAgent
+  context-management defaults.
+- `examples/mem_agent/train_mem_agent.sh` is the canonical verl v1 FSDP2
+  training recipe.
 
-## Data
+## Data preprocessing
 
-The Parquet rows must contain:
+Like the SWE-bench Tasks, HotpotQA owns its preprocessing pipeline. Prepare the
+standard HotpotQA distractor train and validation splits with the policy
+tokenizer:
 
-- `prompt`: an OpenAI-style message list containing the question.
-- `context`: a string or nested list/dictionary containing the long document.
-- `reward_model.ground_truth` (or `ground_truth`): one answer or a list of
-  accepted answers.
+```bash
+python -m uni_agent.tasks.hotpotqa.preprocess \
+    --tokenizer-path /path/to/Qwen3-8B \
+    --local-save-dir /path/to/processed_data \
+    --context-chunk-size 5000
+```
 
-`MemAgentDataset` tokenizes the context, decodes each token-bounded chunk back
-to text, and puts `chunks` plus the answer into `tools_kwargs.task.metadata`.
-The original long context is removed from the returned row, so neither the
-generic task runner nor the Agent needs a tokenizer path or model files.
+The preprocessor writes `hotpotqa_train.parquet` and `hotpotqa_dev.parquet`.
+Each row contains the question and a serialized HotpotQA Task Config under
+`extra_info.tools_kwargs.task`. The Task metadata owns the token-bounded context
+chunks, while the Task Config owns the ground-truth answer. Training therefore
+uses the standard verl Dataset path without a custom runtime Dataset class.
 
 ## Context Management
 
@@ -56,10 +59,10 @@ Set the required paths and launch from the repository root:
 MODEL_PATH=/path/to/Qwen3-8B \
 TRAIN_FILE=/path/to/hotpotqa_train.parquet \
 VAL_FILE=/path/to/hotpotqa_dev.parquet \
-bash examples/quickstart/training/train_mem_agent.sh
+bash examples/mem_agent/train_mem_agent.sh
 ```
 
 The recipe uses `verl.trainer.main_ppo` with the v1 `separate_async` topology.
 Trainer and rollout GPU counts are configurable through environment variables
-in the script. Set `CONTEXT_CHUNK_SIZE` to change the Dataset-side token chunk
-size from its default of 5000.
+in the script. Change `--context-chunk-size` during preprocessing to adjust the
+default 5000-token context chunks.

@@ -6,17 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 import uni_agent.agents.mem_agent.agent as mem_agent_module
-from examples.mem_agent.dataset import (
-    MemAgentDataset,
-    build_task_config,
-    context_to_text,
-    split_context_into_token_chunks,
-)
 from uni_agent.agents import AgentResult
 from uni_agent.agents.mem_agent import MemAgent, MemAgentConfig
 from uni_agent.tasks.hotpotqa import HotpotQATask, HotpotQATaskConfig
+from uni_agent.tasks.hotpotqa.preprocess import context_to_text, process_example, split_context_into_token_chunks
 from uni_agent.tasks.hotpotqa.reward import compute_score, last_boxed_only_string, remove_boxed
-from verl.utils.dataset.rl_dataset import RLHFDataset
 
 
 class _FakeTokenizer:
@@ -51,7 +45,11 @@ class _FakeSandbox:
 
 
 class _FakeAgent:
-    async def run(self, **_):
+    def __init__(self):
+        self.calls: list[dict[str, Any]] = []
+
+    async def run(self, **kwargs):
+        self.calls.append(kwargs)
         return AgentResult(
             output={"response": "Final answer: \\boxed{alpha beta}"},
             info={"num_contexts": 3, "total_steps": 3},
@@ -90,10 +88,7 @@ async def test_mem_agent_uses_each_chunk_as_a_new_context(monkeypatch):
     result = await agent.run(
         sandbox=object(),
         messages=[{"role": "user", "content": "question"}],
-        raw_data={
-            "prompt": [{"role": "user", "content": "question"}],
-            "chunks": ["one two", "three four"],
-        },
+        raw_data={"chunks": ["one two", "three four"]},
     )
 
     context_result = result.output["context_manager_result"]
@@ -119,49 +114,42 @@ def test_boxed_helpers_preserve_nested_braces():
     assert remove_boxed(boxed) == "alpha beta"
 
 
-def test_mem_agent_dataset_builds_standard_task_payload():
-    row = {
-        "raw_prompt": [{"role": "user", "content": "question"}],
-        "context": [["Title", ["alpha", "beta"]]],
-        "reward_model": {"ground_truth": ["answer"]},
-        "tools_kwargs": {"task": {"metadata": {"context": "stale raw context"}}},
+def test_hotpotqa_preprocess_builds_standard_task_payload():
+    example = {
+        "id": "sample-id",
+        "question": "question",
+        "answer": "answer",
+        "type": "bridge",
+        "level": "hard",
+        "context": {"title": ["Title"], "sentences": [["alpha", "beta"]]},
     }
 
-    task = build_task_config(row, tokenizer=_FakeTokenizer(), chunk_size=2)
+    result = process_example(example, tokenizer=_FakeTokenizer(), chunk_size=2)
 
-    assert context_to_text(row["context"]) == "Title\nalpha\nbeta"
-    assert split_context_into_token_chunks(row["context"], tokenizer=_FakeTokenizer(), chunk_size=2) == [
+    assert context_to_text(example["context"]) == "Title\nalpha\nbeta"
+    assert split_context_into_token_chunks(example["context"], tokenizer=_FakeTokenizer(), chunk_size=2) == [
         "Title alpha",
         "beta",
     ]
-    assert task == {
-        "name": "hotpotqa",
+    assert result == {
+        "data_source": "hotpotqa/hotpot_qa",
         "prompt": [{"role": "user", "content": "question"}],
-        "metadata": {
-            "chunks": ["Title alpha", "beta"],
-            "reward_model": {"ground_truth": ["answer"]},
+        "extra_info": {
+            "tools_kwargs": {
+                "task": {
+                    "name": "hotpotqa",
+                    "prompt": [{"role": "user", "content": "question"}],
+                    "ground_truth": ["answer"],
+                    "metadata": {
+                        "instance_id": "sample-id",
+                        "type": "bridge",
+                        "level": "hard",
+                        "chunks": ["Title alpha", "beta"],
+                    },
+                }
+            }
         },
     }
-
-
-def test_mem_agent_dataset_returns_chunks_without_raw_context(monkeypatch):
-    row = {
-        "raw_prompt": [{"role": "user", "content": "question"}],
-        "context": "one two three four",
-        "extra_info": {"context": "duplicate context"},
-        "reward_model": {"ground_truth": ["answer"]},
-    }
-    monkeypatch.setattr(RLHFDataset, "__getitem__", lambda _self, _item: dict(row))
-    dataset = object.__new__(MemAgentDataset)
-    dataset.tokenizer = _FakeTokenizer()
-    dataset.config = {"context_chunk_size": 2}
-
-    result = dataset[0]
-
-    assert result["tools_kwargs"]["task"]["metadata"]["chunks"] == ["one two", "three four"]
-    assert result["tools_kwargs"]["task"]["prompt"] == [{"role": "user", "content": "question"}]
-    assert "context" not in result
-    assert "context" not in result["extra_info"]
 
 
 @pytest.mark.asyncio
@@ -169,19 +157,20 @@ async def test_hotpotqa_task_scores_final_response(monkeypatch):
     task = HotpotQATask(
         HotpotQATaskConfig(
             prompt=[{"role": "user", "content": "question"}],
-            metadata={
-                "chunks": ["long context"],
-                "reward_model": {"ground_truth": ["alpha beta"]},
-            },
+            ground_truth=["alpha beta"],
+            metadata={"chunks": ["long context"]},
             sandbox={"provider": "local"},
             agent=MemAgentConfig(),
         )
     )
     monkeypatch.setattr(task, "build_sandbox", lambda: _FakeSandbox())
-    monkeypatch.setattr(task, "build_agent", _FakeAgent)
+    agent = _FakeAgent()
+    monkeypatch.setattr(task, "build_agent", lambda: agent)
 
     result = await task.run()
 
+    assert agent.calls[0]["messages"] == [{"role": "user", "content": "question"}]
+    assert agent.calls[0]["raw_data"] == {"chunks": ["long context"]}
     assert result.reward == 1.0
     assert result.accuracy == 1.0
     assert result.extra_info == {

@@ -298,15 +298,11 @@ class MemAgent(Agent):
     ) -> AgentResult:
         """Run the MemAgent policy using explicit context-management calls."""
 
-        context_input = dict(raw_data or {})
-        context_input.setdefault("prompt", messages)
-
         cfg: MemAgentConfig = self.config  # type: ignore[assignment]
-        prompt_messages = context_input.get("prompt")
-        if not isinstance(prompt_messages, list) or not prompt_messages:
+        if not messages:
             raise ValueError("mem_agent requires a non-empty prompt message list")
-        prompt = str(prompt_messages[0].get("content", ""))
-        chunks = context_input.get("chunks")
+        prompt = str(messages[0].get("content", ""))
+        chunks = (raw_data or {}).get("chunks")
         if not isinstance(chunks, list) or not all(isinstance(chunk, str) for chunk in chunks):
             raise ValueError("mem_agent requires pre-split text chunks in raw_data['chunks']")
 

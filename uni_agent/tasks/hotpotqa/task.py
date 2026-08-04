@@ -28,7 +28,6 @@ class HotpotQATask(Task):
     async def run(self) -> TaskResult:
         cfg: HotpotQATaskConfig = self.config  # type: ignore[assignment]
         raw_data = dict(cfg.metadata)
-        raw_data["prompt"] = cfg.prompt
 
         async with self.build_sandbox() as sandbox:
             agent = self.build_agent()
