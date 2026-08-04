@@ -12,6 +12,8 @@ The implementation is split by responsibility:
   and dataset preprocessing.
 - `examples/mem_agent/task_config.yaml` contains the HotpotQA task and MemAgent
   context-management defaults.
+- `examples/mem_agent/run_infer_mem_agent.sh` runs inference against an existing
+  OpenAI-compatible model endpoint.
 - `examples/mem_agent/train_mem_agent.sh` is the canonical verl v1 FSDP2
   training recipe.
 
@@ -50,6 +52,25 @@ class MemAgent(Agent):
 Every `update_context()` starts a new Gateway trajectory chain. The Task scores
 the final boxed answer and posts the session-level reward; the framework assigns
 that reward to every context segment emitted by the session.
+
+## Inference
+
+Start an OpenAI-compatible model endpoint, then run MemAgent inference over a
+preprocessed HotpotQA split:
+
+```bash
+cd examples/mem_agent
+bash run_infer_mem_agent.sh
+```
+
+By default, the script reads `~/data/uni_agent/hotpotqa_dev.parquet`, connects
+to `http://localhost:8000/v1`, and uses the served model name `Qwen3-8B`.
+`DATA_FILE`, `BASE_URL`, `MODEL`, and `API_KEY` can override those values.
+`NUM_WORKERS`, `CONCURRENCY`, `ROLLOUT_N`, `LIMIT`, and `LOG_DIR` control
+parallel execution, repeated rollouts, sample count, and output logs. Arguments
+passed after the script name are forwarded to `parallel_infer_api.py`. This path
+only runs and scores the selected Tasks; it does not start a trainer or update
+model parameters.
 
 ## Training
 
