@@ -51,8 +51,14 @@ class HotpotQATask(Task):
 
         reward = compute_score(response, ground_truths)
         context_manager_result = agent_result.output.get("context_manager_result")
+        thinking_turns = 0
         if isinstance(context_manager_result, ContextManagerResult):
             context_manager_result.set_reward(reward)
+            thinking_turns = sum(
+                "<think" in turn.response.lower() or "</think>" in turn.response.lower()
+                for context_step in context_manager_result.trajectory
+                for turn in context_step.steps
+            )
 
         return TaskResult(
             reward=reward,
@@ -61,5 +67,7 @@ class HotpotQATask(Task):
                 "response": response,
                 "num_contexts": agent_result.info.get("num_contexts", 0),
                 "total_steps": agent_result.info.get("total_steps", 0),
+                "thinking_detected": thinking_turns > 0,
+                "thinking_turns": thinking_turns,
             },
         )

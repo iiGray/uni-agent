@@ -6,10 +6,28 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 cd "${REPO_ROOT}"
+: "${MODEL_PATH:=Qwen3-4B}"
+TRAIN_FILE="./hotpotqa/hotpotqa_train_32k.parquet"
+: "${VAL_FILE:=./hotpotqa/hotpotqa_dev.parquet}"
+: "${CONDA_ENV_DIR:=/root/.miniconda3/envs/xxx}"
+: "${PYTHON_BIN:=${CONDA_ENV_DIR}/bin/python3}"
+: "${RAY_BIN:=${CONDA_ENV_DIR}/bin/ray}"
+: "${GPU_IDS:=0,1,2,3,4,5,6,7}"
+: "${RAY_PREFLIGHT_TIMEOUT:=30}"
 
-: "${MODEL_PATH:?Set MODEL_PATH to the policy checkpoint}"
-: "${TRAIN_FILE:?Set TRAIN_FILE to the training Parquet file}"
-: "${VAL_FILE:?Set VAL_FILE to the validation Parquet file}"
+for required_path in "${MODEL_PATH}" "${TRAIN_FILE}" "${VAL_FILE}"; do
+    if [[ ! -e "${required_path}" ]]; then
+        echo "Required path does not exist: ${required_path}" >&2
+        exit 1
+    fi
+done
+for executable in "${PYTHON_BIN}" "${RAY_BIN}"; do
+    if [[ ! -x "${executable}" ]]; then
+        echo "Required executable is missing: ${executable}" >&2
+        exit 1
+    fi
+done
+
 
 TASK_CONFIG="${TASK_CONFIG:-examples/mem_agent/task_config.yaml}"
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-$(basename "${MODEL_PATH}")}"
@@ -26,6 +44,14 @@ ROLLOUT_NNODES="${ROLLOUT_NNODES:-1}"
 ROLLOUT_GPUS_PER_NODE="${ROLLOUT_GPUS_PER_NODE:-4}"
 ROLLOUT_TP="${ROLLOUT_TP:-4}"
 
+IFS=',' read -r -a GPU_ID_ARRAY <<< "${GPU_IDS}"
+GPU_COUNT="${#GPU_ID_ARRAY[@]}"
+REQUESTED_GPUS=$((TRAINER_NNODES * TRAINER_GPUS_PER_NODE + ROLLOUT_NNODES * ROLLOUT_GPUS_PER_NODE))
+if ((REQUESTED_GPUS != GPU_COUNT)); then
+    echo "Trainer + rollout request ${REQUESTED_GPUS} GPUs, but GPU_IDS=${GPU_IDS} contains ${GPU_COUNT}" >&2
+    exit 1
+fi
+
 PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-32}"
 ROLLOUT_N="${ROLLOUT_N:-4}"
 PARAMETER_SYNC_STEP="${PARAMETER_SYNC_STEP:-2}"
@@ -41,6 +67,7 @@ MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-8192}"
 MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-2048}"
 MAX_MODEL_LEN=$((MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))
 PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-32768}"
+CONTEXT_CHUNK_SIZE="${CONTEXT_CHUNK_SIZE:-5000}"
 
 GATEWAY_COUNT="${GATEWAY_COUNT:-1}"
 CONCURRENCY="${CONCURRENCY:-32}"
@@ -49,10 +76,46 @@ NUM_AGENT_WORKERS="${NUM_AGENT_WORKERS:-8}"
 export HYDRA_FULL_ERROR=1
 export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/verl:${PYTHONPATH:-}"
 
-ray job submit --no-wait \
+if ! "${RAY_BIN}" status >/dev/null 2>&1; then
+    echo "Starting a local Ray cluster on physical GPUs ${GPU_IDS}..."
+    CUDA_VISIBLE_DEVICES="${GPU_IDS}" "${RAY_BIN}" start --head --num-gpus="${GPU_COUNT}"
+fi
+
+GPU_IDS="${GPU_IDS}" GPU_COUNT="${GPU_COUNT}" RAY_PREFLIGHT_TIMEOUT="${RAY_PREFLIGHT_TIMEOUT}" \
+    "${PYTHON_BIN}" - <<'PY'
+import os
+
+import ray
+
+expected = set(os.environ["GPU_IDS"].split(","))
+ray.init(address="auto", logging_level="ERROR")
+
+
+@ray.remote(num_gpus=int(os.environ["GPU_COUNT"]))
+def visible_gpu_ids() -> str:
+    return os.environ.get("CUDA_VISIBLE_DEVICES", "")
+
+
+gpu_probe = visible_gpu_ids.remote()
+try:
+    visible = ray.get(gpu_probe, timeout=float(os.environ["RAY_PREFLIGHT_TIMEOUT"]))
+except ray.exceptions.GetTimeoutError:
+    ray.cancel(gpu_probe, force=True)
+    raise SystemExit("Timed out waiting for all requested GPUs; another Ray job may still be using them.") from None
+actual = set(visible.split(","))
+ray.shutdown()
+if actual != expected:
+    raise SystemExit(
+        f"Ray cluster exposes physical GPUs {sorted(actual)}, expected {sorted(expected)}. "
+        "Stop the existing Ray cluster or set GPU_IDS to match it."
+    )
+print(f"Ray GPU preflight passed: {','.join(sorted(actual, key=int))}")
+PY
+
+"${RAY_BIN}" job submit --no-wait \
     --working-dir="${REPO_ROOT}" \
     --runtime-env-json="{\"env_vars\": {\"NCCL_DEBUG\": \"INFO\", \"NCCL_P2P_DISABLE\": \"1\", \"NCCL_IB_DISABLE\": \"1\", \"RAY_DEDUP_LOGS\": \"0\"}}" \
-    -- python3 -m verl.trainer.main_ppo \
+    -- "${PYTHON_BIN}" -m verl.trainer.main_ppo \
     --config-name=ppo_trainer \
     trainer.use_v1=True \
     trainer.v1.trainer_mode=separate_async \
@@ -68,6 +131,9 @@ ray job submit --no-wait \
     data.max_prompt_length="${MAX_PROMPT_LENGTH}" \
     data.max_response_length="${MAX_RESPONSE_LENGTH}" \
     data.train_batch_size="${TRAIN_BATCH_SIZE}" \
+    data.custom_cls.path=pkg://uni_agent.tasks.hotpotqa.dataset \
+    data.custom_cls.name=HotpotQAMemAgentDataset \
+    ++data.context_chunk_size="${CONTEXT_CHUNK_SIZE}" \
     algorithm.adv_estimator=grpo \
     algorithm.use_kl_in_reward=False \
     algorithm.rollout_correction.bypass_mode=False \
@@ -101,7 +167,7 @@ ray job submit --no-wait \
     actor_rollout_ref.rollout.calculate_log_probs=True \
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu="${PPO_MAX_TOKEN_LEN_PER_GPU}" \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
     actor_rollout_ref.rollout.checkpoint_engine.backend=nccl \
     actor_rollout_ref.rollout.multi_turn.enable=True \
     actor_rollout_ref.rollout.multi_turn.max_parallel_calls=1 \
