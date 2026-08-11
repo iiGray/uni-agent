@@ -126,6 +126,7 @@ PY
     data.val_files="['${VAL_FILE}']" \
     data.prompt_key=prompt \
     data.return_raw_chat=True \
+    ++data.apply_chat_template_kwargs.enable_thinking=False \
     data.filter_overlong_prompts=False \
     data.truncation=error \
     data.max_prompt_length="${MAX_PROMPT_LENGTH}" \
