@@ -201,8 +201,11 @@ separate diagnostic and is not used for the macro result above.
 ## Implementation map
 
 - `uni_agent/agents/mem_agent/`: MemAgent policy and context management.
-- `uni_agent/tasks/hotpotqa/`: raw dataset adapter, chunking, reward, and
-  inference summary logic.
+- `uni_agent/tasks/hotpotqa/`: HotpotQA preprocessing helpers, Task, and reward.
+- `examples/mem_agent/dataset.py`: raw training-parquet adapter and runtime Task
+  payload construction.
+- `examples/mem_agent/infer.py`: raw 8K-1M JSON adapter, concurrent inference,
+  resume handling, and summary generation.
 - `examples/mem_agent/task_config.yaml`: task and agent defaults.
 - `examples/mem_agent/train_mem_agent.sh`: verl v1 FSDP2/GRPO training entry
   point.

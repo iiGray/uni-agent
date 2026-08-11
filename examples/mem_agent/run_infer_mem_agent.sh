@@ -156,7 +156,7 @@ for len in "${LENGTH_ARRAY[@]}"; do
         inference_args+=(--limit "${LIMIT}")
     fi
 
-    "${PYTHON_BIN}" -m uni_agent.tasks.hotpotqa.infer "${inference_args[@]}" "$@"
+    "${PYTHON_BIN}" examples/mem_agent/infer.py "${inference_args[@]}" "$@"
 done
 
 echo "All selected HotpotQA runs finished. Results: ${OUTPUT_DIR}"

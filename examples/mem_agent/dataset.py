@@ -8,9 +8,11 @@ import datasets
 import numpy as np
 import pyarrow.parquet as pq
 
+from uni_agent.tasks.hotpotqa.preprocess import (
+    DEFAULT_CONTEXT_CHUNK_SIZE,
+    split_context_into_token_chunks,
+)
 from verl.utils.dataset.rl_dataset import RLHFDataset
-
-from .preprocess import DEFAULT_CONTEXT_CHUNK_SIZE, split_context_into_token_chunks
 
 _REQUIRED_COLUMNS = ("data_source", "prompt", "context", "reward_model", "extra_info")
 

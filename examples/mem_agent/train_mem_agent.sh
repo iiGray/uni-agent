@@ -132,7 +132,7 @@ PY
     data.max_prompt_length="${MAX_PROMPT_LENGTH}" \
     data.max_response_length="${MAX_RESPONSE_LENGTH}" \
     data.train_batch_size="${TRAIN_BATCH_SIZE}" \
-    data.custom_cls.path=pkg://uni_agent.tasks.hotpotqa.dataset \
+    data.custom_cls.path=pkg://examples.mem_agent.dataset \
     data.custom_cls.name=HotpotQAMemAgentDataset \
     ++data.context_chunk_size="${CONTEXT_CHUNK_SIZE}" \
     algorithm.adv_estimator=grpo \

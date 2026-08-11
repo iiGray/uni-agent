@@ -21,8 +21,7 @@ from typing import Any
 from transformers import AutoTokenizer
 
 from uni_agent.tasks import TaskConfigResolver, get_task
-
-from .preprocess import DEFAULT_CONTEXT_CHUNK_SIZE, split_context_into_token_chunks
+from uni_agent.tasks.hotpotqa.preprocess import DEFAULT_CONTEXT_CHUNK_SIZE, split_context_into_token_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -188,9 +187,7 @@ def _write_summary(
     exact_matches = sum(bool(record.get("exact_match")) for record in successful)
     contained_answers = sum(bool(record.get("answer_contained")) for record in successful)
     thinking_detected = sum(bool(record.get("thinking_detected")) for record in successful)
-    score = (
-        sum(float(record.get("reward", 0.0)) for record in successful) / len(successful) if successful else 0.0
-    )
+    score = sum(float(record.get("reward", 0.0)) for record in successful) / len(successful) if successful else 0.0
     summary = {
         "data_path": str(data_path),
         "output_path": str(output_path),
