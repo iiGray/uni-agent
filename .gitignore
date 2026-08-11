@@ -129,8 +129,3 @@ logs
 log
 outputs
 .history
-
-
-examples/mem_agent/run_infer_mem_agent_self.sh
-
-examples/mem_agent/train_mem_agent_self.sh
