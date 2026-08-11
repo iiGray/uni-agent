@@ -1,89 +1,210 @@
-# MemAgent
+# MemAgent Recipe
 
-MemAgent is a self-contained Agent that reads a long document in token chunks,
-starts a new model context for every chunk, carries forward a compact memory,
-and answers the original question from the final memory.
+This recipe trains MemAgent on the 32K HotpotQA training split and evaluates
+the base and trained models on eight context lengths from 8K to 1M tokens.
+MemAgent reads a long context in token-bounded chunks, starts a fresh model
+context for every chunk, carries a compact memory between chunks, and answers
+the question from the final memory.
 
-The implementation is split by responsibility:
+## Result
 
-- `uni_agent/agents/mem_agent/` contains the MemAgent policy and its
-  context-management methods.
-- `uni_agent/tasks/hotpotqa/` contains the HotpotQA task, final-answer reward,
-  and dataset preprocessing.
-- `examples/mem_agent/task_config.yaml` contains the HotpotQA task and MemAgent
-  context-management defaults.
-- `examples/mem_agent/run_infer_mem_agent.sh` runs inference against an existing
-  OpenAI-compatible model endpoint.
-- `examples/mem_agent/train_mem_agent.sh` is the canonical verl v1 FSDP2
-  training recipe.
+The reported metric is the macro-average of the eight per-length main scores
+(`mean_boxed_answer_token_lcs`):
 
-## Data preprocessing
+| Model | 8K-1M macro score |
+| --- | ---: |
+| Qwen3-4B before training | 53.5 |
+| Qwen3-4B after MemAgent training | 58.0 |
+| Absolute improvement | +4.5 |
 
-Like the SWE-bench Tasks, HotpotQA owns its preprocessing pipeline. Prepare the
-standard HotpotQA distractor train and validation splits with the policy
-tokenizer:
+The eight evaluation lengths are `8k`, `16k`, `32k`, `64k`, `128k`,
+`256k`, `512k`, and `1M`.
 
-```bash
-python -m uni_agent.tasks.hotpotqa.preprocess \
-    --tokenizer-path /path/to/Qwen3-8B \
-    --local-save-dir /path/to/processed_data \
-    --context-chunk-size 5000
-```
+## Requirements
 
-The preprocessor writes `hotpotqa_train.parquet` and `hotpotqa_dev.parquet`.
-Each row contains the question and a serialized HotpotQA Task Config under
-`extra_info.tools_kwargs.task`. The Task metadata owns the token-bounded context
-chunks, while the Task Config owns the ground-truth answer. Training therefore
-uses the standard verl Dataset path without a custom runtime Dataset class.
+- A working uni-agent/verl environment with PyTorch, Ray, vLLM,
+  Transformers, and Hugging Face Hub installed.
+- Eight visible GPUs for the default recipe: four trainer GPUs and four
+  rollout GPUs. The GPU split can be changed through the environment variables
+  documented in `train_mem_agent.sh`.
+- Enough local storage for the 32K training parquet and the 8K-1M evaluation
+  JSON files.
 
-## Context Management
-
-`MemAgent` implements the context-management methods directly:
-
-```python
-class MemAgent(Agent):
-    async def run(self, *, sandbox, messages):
-        async with self.context_session():
-            await self.update_context(...)
-            memory = (await self.step()).response
-        return self.build_agent_result()
-```
-
-Every `update_context()` starts a new Gateway trajectory chain. The Task scores
-the final boxed answer and posts the session-level reward; the framework assigns
-that reward to every context segment emitted by the session.
-
-## Inference
-
-Start an OpenAI-compatible model endpoint, then run MemAgent inference over a
-preprocessed HotpotQA split:
+Run every command below from the repository root:
 
 ```bash
-cd examples/mem_agent
-bash run_infer_mem_agent.sh
+cd /path/to/uni-agent
+
+export CONDA_ENV_DIR=/path/to/conda/env
+export PYTHON_BIN="${CONDA_ENV_DIR}/bin/python3"
+export BASE_MODEL="${PWD}/models/Qwen3-4B"
+export DATA_DIR="${PWD}/hotpotqa"
+export PATH="${CONDA_ENV_DIR}/bin:${PATH}"
+export PYTHONPATH="${PWD}:${PWD}/verl:${PYTHONPATH:-}"
 ```
 
-By default, the script reads `~/data/uni_agent/hotpotqa_dev.parquet`, connects
-to `http://localhost:8000/v1`, and uses the served model name `Qwen3-8B`.
-`DATA_FILE`, `BASE_URL`, `MODEL`, and `API_KEY` can override those values.
-`NUM_WORKERS`, `CONCURRENCY`, `ROLLOUT_N`, `LIMIT`, and `LOG_DIR` control
-parallel execution, repeated rollouts, sample count, and output logs. Arguments
-passed after the script name are forwarded to `parallel_infer_api.py`. This path
-only runs and scores the selected Tasks; it does not start a trainer or update
-model parameters.
+## 1. Download the model and data
 
-## Training
-
-Set the required paths and launch from the repository root:
+Download Qwen3-4B if it is not already available locally:
 
 ```bash
-MODEL_PATH=/path/to/Qwen3-8B \
-TRAIN_FILE=/path/to/hotpotqa_train.parquet \
-VAL_FILE=/path/to/hotpotqa_dev.parquet \
-bash examples/mem_agent/train_mem_agent.sh
+hf download Qwen/Qwen3-4B \
+  --local-dir "${BASE_MODEL}"
 ```
 
-The recipe uses `verl.trainer.main_ppo` with the v1 `separate_async` topology.
-Trainer and rollout GPU counts are configurable through environment variables
-in the script. Change `--context-chunk-size` during preprocessing to adjust the
-default 5000-token context chunks.
+Download the HotpotQA data from
+[`BytedTsinghua-SIA/hotpotqa`](https://huggingface.co/datasets/BytedTsinghua-SIA/hotpotqa):
+
+```bash
+hf download BytedTsinghua-SIA/hotpotqa \
+  --repo-type dataset \
+  --local-dir "${DATA_DIR}"
+```
+
+This recipe uses the following files directly; no intermediate preprocessing
+step is required:
+
+```text
+hotpotqa/hotpotqa_train_32k.parquet
+hotpotqa/hotpotqa_dev.parquet
+hotpotqa/eval_hotpotqa_8k.json
+hotpotqa/eval_hotpotqa_16k.json
+hotpotqa/eval_hotpotqa_32k.json
+hotpotqa/eval_hotpotqa_64k.json
+hotpotqa/eval_hotpotqa_128k.json
+hotpotqa/eval_hotpotqa_256k.json
+hotpotqa/eval_hotpotqa_512k.json
+hotpotqa/eval_hotpotqa_1M.json
+```
+
+Verify the required files before starting a long run:
+
+```bash
+test -f "${DATA_DIR}/hotpotqa_train_32k.parquet"
+test -f "${DATA_DIR}/hotpotqa_dev.parquet"
+for length in 8k 16k 32k 64k 128k 256k 512k 1M; do
+  test -f "${DATA_DIR}/eval_hotpotqa_${length}.json"
+done
+```
+
+`train_mem_agent.sh` expects the downloaded directory at `./hotpotqa` by
+default. If the data is stored elsewhere, update `TRAIN_FILE` and `VAL_FILE`
+at the top of the script before launching the Ray job.
+
+## 2. Train MemAgent
+
+The canonical training entry point is:
+
+```bash
+export EXPERIMENT_NAME=mem_agent_qwen3_4b_hotpotqa_32k
+
+CONDA_ENV_DIR="${CONDA_ENV_DIR}" \
+MODEL_PATH="${BASE_MODEL}" \
+GPU_IDS=0,1,2,3,4,5,6,7 \
+EXPERIMENT_NAME="${EXPERIMENT_NAME}" \
+bash ./examples/mem_agent/train_mem_agent.sh
+```
+
+The script launches verl v1 GRPO with `separate_async` resource pools:
+
+- four GPUs for FSDP2 actor training;
+- four GPUs for vLLM rollout with tensor parallelism 4;
+- 5,000-token context chunks;
+- Qwen thinking mode disabled with
+  `data.apply_chat_template_kwargs.enable_thinking=false`.
+
+The Ray job is submitted with `--no-wait`. Use the submission ID printed by
+the launch command to follow it:
+
+```bash
+ray job list
+ray job logs <raysubmit_id> --follow
+```
+
+Checkpoints are written under:
+
+```text
+checkpoints/mem_agent/<experiment_name>/global_step_<N>/actor/
+```
+
+## 3. Merge a training checkpoint
+
+verl saves the actor as an FSDP checkpoint. Merge the step selected for
+evaluation into a Hugging Face directory before starting vLLM:
+
+```bash
+export STEP=30
+export CHECKPOINT_ROOT="${PWD}/checkpoints/mem_agent/${EXPERIMENT_NAME}"
+export TRAINED_MODEL="${CHECKPOINT_ROOT}/global_step_${STEP}_hf"
+
+"${PYTHON_BIN}" -m verl.model_merger merge \
+  --backend fsdp \
+  --local_dir "${CHECKPOINT_ROOT}/global_step_${STEP}/actor" \
+  --target_dir "${TRAINED_MODEL}"
+```
+
+Choose `STEP` based on the saved checkpoints and validation curve; step 30 is
+shown only as an example.
+
+## 4. Evaluate the untrained model
+
+`run_infer_mem_agent.sh` starts vLLM, runs all eight HotpotQA lengths, writes
+one JSONL record per sample, and writes a summary JSON for each length:
+
+```bash
+export BASE_RESULTS="${PWD}/outputs/mem_agent/qwen3_4b_base_8k_1m"
+
+CONDA_ENV_DIR="${CONDA_ENV_DIR}" \
+MODEL_PATH="${BASE_MODEL}" \
+DATA_DIR="${DATA_DIR}" \
+GPU_IDS=0,1,2,3,4,5,6,7 \
+OUTPUT_DIR="${BASE_RESULTS}" \
+LOG_DIR="${PWD}/logs/mem_agent/qwen3_4b_base_8k_1m" \
+ENFORCE_EAGER=1 \
+bash ./examples/mem_agent/run_infer_mem_agent.sh
+```
+
+The inference server also sets `enable_thinking=false`. Existing successful
+JSONL rows are reused, so an interrupted long benchmark can be resumed by
+running the same command again.
+
+## 5. Evaluate the trained model
+
+Run the identical benchmark with the merged checkpoint:
+
+```bash
+export TRAINED_RESULTS="${PWD}/outputs/mem_agent/qwen3_4b_memagent_step_${STEP}_8k_1m"
+
+CONDA_ENV_DIR="${CONDA_ENV_DIR}" \
+MODEL_PATH="${TRAINED_MODEL}" \
+DATA_DIR="${DATA_DIR}" \
+GPU_IDS=0,1,2,3,4,5,6,7 \
+OUTPUT_DIR="${TRAINED_RESULTS}" \
+LOG_DIR="${PWD}/logs/mem_agent/qwen3_4b_memagent_step_${STEP}_8k_1m" \
+ENFORCE_EAGER=1 \
+bash ./examples/mem_agent/run_infer_mem_agent.sh
+```
+
+Each result directory contains:
+
+```text
+hotpotqa_<length>.jsonl
+hotpotqa_<length>_summary.json
+```
+
+The main score is the mean token-level LCS reward of the final boxed answers.
+For each sample, the evaluator extracts the last `\boxed{...}` answer and
+compares it with the accepted answers. `Answer Contained` is reported as a
+separate diagnostic and is not used for the macro result above.
+
+
+## Implementation map
+
+- `uni_agent/agents/mem_agent/`: MemAgent policy and context management.
+- `uni_agent/tasks/hotpotqa/`: raw dataset adapter, chunking, reward, and
+  inference summary logic.
+- `examples/mem_agent/task_config.yaml`: task and agent defaults.
+- `examples/mem_agent/train_mem_agent.sh`: verl v1 FSDP2/GRPO training entry
+  point.
+- `examples/mem_agent/run_infer_mem_agent.sh`: self-contained vLLM inference
+  and 8K-1M evaluation entry point.
