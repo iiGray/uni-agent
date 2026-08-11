@@ -95,10 +95,10 @@ def test_timeout_wins_over_liveness_even_when_dead():
     assert res.exit_code == -1
 
 
-def test_exec_shell_wraps_in_bash_lc():
+def test_exec_shell_wraps_in_non_login_bash():
     sb = _FakeSandbox(result=ExecResult(exit_code=0, stdout="", stderr=""))
     asyncio.run(sb.exec_shell("echo hi", timeout=3, workdir="/tmp"))
-    assert sb.calls[0]["argv"] == ["bash", "-lc", "echo hi"]
+    assert sb.calls[0]["argv"] == ["bash", "-c", "echo hi"]
     assert sb.calls[0]["timeout"] == 3
     assert sb.calls[0]["workdir"] == "/tmp"
 

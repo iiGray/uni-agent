@@ -58,7 +58,7 @@ val_top_k=${VAL_TOP_K:--1}
 
 # Performance Related Parameter
 use_dynamic_bsz=${USE_DYNAMIC_BSZ:-True}
-offload=${OFFLOAD:-False}
+offload=${OFFLOAD:-True}
 gen_tp=${GEN_TP:-2}
 train_tp=${TP:-4}
 train_pp=${PP:-1}
@@ -82,7 +82,7 @@ NGPUS_PER_NODE=${NGPUS_PER_NODE:-8}
 # parameter_sync_step defaults to 1 for colocate_async, so train_batch_size
 # (prompts/step) only needs to be > 0 (the old async mode used train_batch_size=0).
 # num_warmup_batches pre-fills the rollout pipeline before the first train step.
-train_prompt_bsz=${TRAIN_PROMPT_BSZ:-32}
+train_prompt_bsz=${TRAIN_PROMPT_BSZ:-64}
 n_resp_per_prompt=${N_RESP_PER_PROMPT:-8}
 train_prompt_mini_bsz=${PPO_MINI_BATCH_SIZE:-16}
 num_warmup_batches=${NUM_WARMUP_BATCHES:-1}
@@ -103,7 +103,8 @@ rollout_rs=${ROLLOUT_RS:-null}                                   # no rejection 
 rollout_rs_threshold=${ROLLOUT_RS_THRESHOLD:-null}
 
 ray job submit --no-wait --runtime-env $RUNTIME_ENV \
-    -- python3 -m verl.trainer.main_ppo \
+    -- env RAY_OVERRIDE_JOB_RUNTIME_ENV=1 \
+    python3 -m verl.trainer.main_ppo \
     --config-name=ppo_megatron_trainer \
     trainer.use_v1=True \
     trainer.v1.trainer_mode=colocate_async \
@@ -130,7 +131,7 @@ ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     actor_rollout_ref.actor.clip_ratio_high=${clip_ratio_high} \
     actor_rollout_ref.actor.clip_ratio_c=${clip_ratio_c} \
     +actor_rollout_ref.model.override_config.model_config.max_position_embeddings=$((max_prompt_length + max_response_length)) \
-    actor_rollout_ref.model.use_fused_kernels=False \
+    actor_rollout_ref.model.use_fused_kernels=True \
     actor_rollout_ref.actor.use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.actor.ppo_mini_batch_size=${train_prompt_mini_bsz} \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=${actor_ppo_max_token_len} \
@@ -143,6 +144,7 @@ ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     +actor_rollout_ref.actor.optim.override_optimizer_config.use_precision_aware_optimizer=True \
     +actor_rollout_ref.actor.optim.override_optimizer_config.optimizer_cpu_offload=True \
     actor_rollout_ref.actor.megatron.use_mbridge=$USE_MBRIDGE \
+    actor_rollout_ref.actor.megatron.vanilla_mbridge=$USE_MBRIDGE \
     actor_rollout_ref.actor.megatron.use_dist_checkpointing=$USE_DIST_CKPT \
     actor_rollout_ref.actor.megatron.param_offload=${offload} \
     actor_rollout_ref.actor.megatron.grad_offload=${offload} \

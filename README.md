@@ -38,10 +38,12 @@ We publish runnable [recipes](./examples/) with complete configurations, benchma
 
 Follow the end-to-end path:
 
-1. [Install Uni-Agent](https://uni-agent.readthedocs.io/en/latest/quickstart/installation.html)
-2. [Launch a sandbox and run code](https://uni-agent.readthedocs.io/en/latest/quickstart/launch-sandbox.html)
-3. [Run agent inference](https://uni-agent.readthedocs.io/en/latest/quickstart/agent-inference.html)
-4. [Train an agent with RL](https://uni-agent.readthedocs.io/en/latest/quickstart/rl-training.html)
+1. [Install Uni-Agent](https://uni-agent.readthedocs.io/en/latest/quickstart/installation.html) with support for the latest `verl` features like `colocate_async`.
+2. [Launch a sandbox and run code](https://uni-agent.readthedocs.io/en/latest/quickstart/launch-sandbox.html) locally or with cloud services.
+3. [Run agent inference](https://uni-agent.readthedocs.io/en/latest/quickstart/agent-inference.html) at scale for benchmarking and trajectory generation.
+4. [Train an agent with RL](https://uni-agent.readthedocs.io/en/latest/quickstart/rl-training.html) with reproducible scripts and verifiable results.
+
+For detailed guides and examples, we strongly recommend reading the [Uni-Agent documentation](https://uni-agent.readthedocs.io/en/latest/).
 
 ## Results 📊
 
@@ -50,13 +52,15 @@ Follow the end-to-end path:
 We compare Uni-Agent with existing agent systems on parallel inference and verification workloads.
 
 
-| Model            | Benchmark          | OpenHands | Uni-Agent | Setting |
-| ---------------- | ------------------ |:---------:|:---------:| ------- |
-| Qwen3-Coder-30B  | SWE-Bench Verified | -         | **49.2**  | Avg@4, 100 turns, 128K |
-| Qwen3-Coder-480B | SWE-Bench Verified | 62.4      | **64.2**  | Avg@4, 500 turns, 256K |
-| Qwen3-Coder-Next | SWE-Bench Verified | 66.6      | **67.6**  | Avg@4, 300 turns, 128K |
-| Qwen3.5-35B-A3B  | SWE-Bench Verified | 62.0      | **68.4**  | Avg@1, 200 turns, 128K |
-| Qwen3.6-35B-A3B  | Terminal-Bench v2  | -         | **42.5**  | Avg@1, 200K |
+| Model            | Benchmark             | Resolved  | Setting |
+| ---------------- | --------------------- |:---------:| ------- |
+| Qwen3-Coder-30B  | SWE-Bench Verified    | **49.2**  | Avg@4, 100 turns, 128K |
+| Qwen3-Coder-480B | SWE-Bench Verified    | **64.2**  | Avg@4, 500 turns, 256K |
+| Qwen3-Coder-Next | SWE-Bench Verified    | **67.6**  | Avg@4, 300 turns, 128K |
+| Qwen3-Coder-30B  | SWE-Bench Multiligual | **35.0**  | Avg@1, 200 turns, 128K |
+| Qwen3.5-9B       | SWE-Bench Verified    | **58.2**  | Avg@1, 200 turns, 128K |
+| Qwen3.5-35B-A3B  | SWE-Bench Verified    | **68.4**  | Avg@1, 200 turns, 128K |
+| Qwen3.6-35B-A3B  | Terminal-Bench v2     | **42.5**  | Avg@1, 200K |
 
 Detailed settings and additional reference results are available in [Inference and Verification](https://uni-agent.readthedocs.io/en/latest/benchmark/inference.html).
 
@@ -66,11 +70,12 @@ Uni-Agent supports agent RL training with the same interaction stack used at inf
 Example scripts are available in [examples/quickstart/training](examples/quickstart/training).
 
 
-| Model                        | Dataset      | Method | Setting | Base | RL |
-| ---------------------------- | ------------ | ------ | ------- |:----:|:--:|
-| Qwen3-30B-A3B-Instruct       | R2E-Gym      | GSPO   | Fully Async, 100 turns, 128K | 22.2 | **36.8** |
-| Qwen3-Coder-30B-A3B-Instruct | R2E-Gym      | GSPO   | Fully Async, 100 turns, 128K | 46.2 | **52.0** |
-| Qwen3.5-9B                   | SWE-reBench  | GRPO   | Fully Async, 100 turns, 128K | 53.8 | **59.2** |
+| Model                        | Dataset      | Setting | Base | RL |
+| ---------------------------- | ------------ | ------- |:----:|:--:|
+| Qwen3-30B-A3B-Instruct       | R2E-Gym      | Fully Async, 100 turns, 128K    | 22.2    | **36.8** |
+| Qwen3-Coder-30B-A3B-Instruct | R2E-Gym      | Fully Async, 100 turns, 128K    | 46.2    | **52.0** |
+| Qwen3.5-9B                   | SWE-reBench  | Fully Async, 100 turns, 128K    | 53.8    | **59.2** |
+| Qwen3-Coder-30B-A3B-Instruct | SWE-reBench  | Colocate Async, 200 turns, 128K | 47.4    | **54.2** |
 
 Training dynamics, asynchronous rollout performance, and reproducibility details are available in [RL Training](https://uni-agent.readthedocs.io/en/latest/benchmark/rl-training.html).
 

@@ -59,6 +59,7 @@ The Quickstart provides separate configs for the two Agent types:
         name: react
         max_steps: 200
         tools:
+          - name: str_replace_editor
           - name: stateful_shell
             command_timeout: 120
             env_vars:
@@ -67,7 +68,6 @@ The Quickstart provides separate configs for the two Agent types:
               MANPAGER: "cat"
               TQDM_DISABLE: "1"
               PIP_PROGRESS_BAR: "off"
-          - name: str_replace_editor
           - name: submit
         model:
           temperature: 1.0
@@ -82,6 +82,7 @@ The Quickstart provides separate configs for the two Agent types:
         name: react
         max_steps: 200
         tools:
+          - name: str_replace_editor
           - name: stateful_shell
             command_timeout: 120
             env_vars:
@@ -90,7 +91,6 @@ The Quickstart provides separate configs for the two Agent types:
               MANPAGER: "cat"
               TQDM_DISABLE: "1"
               PIP_PROGRESS_BAR: "off"
-          - name: str_replace_editor
           - name: submit
         model:
           temperature: 1.0
@@ -199,7 +199,7 @@ PPO_MINI_BATCH_SIZE=16 \
 TASK_CONFIG=examples/quickstart/training/task_config_react.yaml \
 MASK_UNFINISHED_EPISODE=True \
 EXP_NAME=react_qwen3_coder_30b_gspo_r3 \
-ADV_ESTIMATOR=rloo \
+ADV_ESTIMATOR=grpo \
 LOSS_MODE=gspo \
 CLIP_RATIO_LOW=4e-4 \
 CLIP_RATIO_HIGH=4e-4 \
@@ -245,7 +245,9 @@ Checkpoints and per-session Agent logs are written under:
 
 ### Results
 
-_To be added._
+The following dashboard summarizes reward, SWE-Bench Verified performance, rollout behavior, throughput, timing, and policy-drift metrics for this run:
+
+![Qwen3-Coder-30B-A3B-Instruct training metrics](../assets/results_qwen3_coder_30b.svg){ width="1200" }
 
 ## Case 2: Claude Code RL
 

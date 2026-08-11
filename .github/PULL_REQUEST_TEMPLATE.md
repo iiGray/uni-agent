@@ -1,38 +1,14 @@
 ## Summary
 
 <!--
-Explain the problem, the chosen solution, and why this belongs in Uni-Agent.
-Link related work with "Fixes #123" or "Related to #123" when applicable.
+Briefly describe what this PR changes and why.
 -->
 
 ## Changes
 
-<!--
-List the important changes. For non-trivial work, identify the owning layer
-(Task, Agent, Tool, Sandbox, Gateway, or Framework) and note key trade-offs.
--->
+<!-- List the key changes. -->
 
 -
-
-## Validation
-
-<!--
-List exact commands and results, including focused unit tests and relevant
-end-to-end runs. If a check was not run, write "Not run" and explain why.
-Include benchmark methodology for performance-sensitive changes.
--->
-
--
-
-## Compatibility
-
-<!--
-Describe impacts on public Python APIs, Task/Sample Config, datasets, model
-protocols, trajectories, checkpoints, and existing recipes. Write "None" when
-there is no compatibility impact. For a breaking change, include migration steps.
--->
-
-None.
 
 ## PR title
 
